@@ -4,7 +4,7 @@ mod color;
 mod ops;
 mod strategy;
 
-pub use color::{format_color, parse_color};
+pub use color::{color_to_rgb, format_color, parse_color, rgb_to_hex};
 pub use ops::{
     apply_mute_indicator, clear_mute_indicator, refresh_after_reconnect, restore_on_exit,
     set_single_led,

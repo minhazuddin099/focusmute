@@ -33,22 +33,39 @@ fn decode_wav(wav_bytes: &[u8]) -> Option<DecodedSound> {
 }
 
 /// Load and decode sound from a custom path, falling back to built-in on any error.
-pub(crate) fn load_sound_data(path: &str, fallback: &'static [u8]) -> DecodedSound {
+///
+/// Returns `(decoded_sound, optional_warning)`. The warning is set when a custom
+/// path was specified but the file could not be loaded (missing, invalid WAV, etc.).
+pub(crate) fn load_sound_data(
+    path: &str,
+    fallback: &'static [u8],
+) -> (DecodedSound, Option<String>) {
     let path = path.trim();
     if path.is_empty() {
-        return decode_wav(fallback).expect("embedded WAV must be valid");
+        return (
+            decode_wav(fallback).expect("embedded WAV must be valid"),
+            None,
+        );
     }
     match std::fs::read(path) {
         Ok(data) => match decode_wav(&data) {
-            Some(decoded) => decoded,
+            Some(decoded) => (decoded, None),
             None => {
-                log::warn!("[sound] {path} is not a valid WAV file, using built-in");
-                decode_wav(fallback).expect("embedded WAV must be valid")
+                let msg = format!("{path} is not a valid WAV file, using built-in");
+                log::warn!("[sound] {msg}");
+                (
+                    decode_wav(fallback).expect("embedded WAV must be valid"),
+                    Some(msg),
+                )
             }
         },
         Err(e) => {
-            log::warn!("[sound] could not read {path}: {e}, using built-in");
-            decode_wav(fallback).expect("embedded WAV must be valid")
+            let msg = format!("could not read {path}: {e}, using built-in");
+            log::warn!("[sound] {msg}");
+            (
+                decode_wav(fallback).expect("embedded WAV must be valid"),
+                Some(msg),
+            )
         }
     }
 }
@@ -109,24 +126,27 @@ mod tests {
 
     #[test]
     fn load_sound_data_empty_path_returns_decoded_builtin() {
-        let result = load_sound_data("", SOUND_MUTED);
+        let (result, warning) = load_sound_data("", SOUND_MUTED);
         let reference = decode_wav(SOUND_MUTED).unwrap();
         assert_eq!(result.channels, reference.channels);
         assert_eq!(result.sample_rate, reference.sample_rate);
         assert_eq!(result.samples.len(), reference.samples.len());
+        assert!(warning.is_none());
     }
 
     #[test]
     fn load_sound_data_whitespace_path_returns_builtin() {
-        let result = load_sound_data("   ", SOUND_MUTED);
+        let (result, warning) = load_sound_data("   ", SOUND_MUTED);
         assert!(result.channels > 0);
+        assert!(warning.is_none());
     }
 
     #[test]
     fn load_sound_data_missing_file_returns_builtin() {
-        let result = load_sound_data("/nonexistent/path/sound.wav", SOUND_MUTED);
+        let (result, warning) = load_sound_data("/nonexistent/path/sound.wav", SOUND_MUTED);
         let reference = decode_wav(SOUND_MUTED).unwrap();
         assert_eq!(result.samples.len(), reference.samples.len());
+        assert!(warning.is_some(), "should warn about missing file");
     }
 
     #[test]
@@ -136,9 +156,10 @@ mod tests {
         let path = dir.join("not_a_wav.wav");
         std::fs::write(&path, b"this is not a wav file").unwrap();
 
-        let result = load_sound_data(path.to_str().unwrap(), SOUND_MUTED);
+        let (result, warning) = load_sound_data(path.to_str().unwrap(), SOUND_MUTED);
         let reference = decode_wav(SOUND_MUTED).unwrap();
         assert_eq!(result.samples.len(), reference.samples.len());
+        assert!(warning.is_some(), "should warn about invalid WAV");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -150,10 +171,11 @@ mod tests {
         let path = dir.join("test.wav");
         std::fs::write(&path, SOUND_MUTED).unwrap();
 
-        let result = load_sound_data(path.to_str().unwrap(), SOUND_UNMUTED);
+        let (result, warning) = load_sound_data(path.to_str().unwrap(), SOUND_UNMUTED);
         // Should decode to the muted sound data, not the unmuted fallback
         let muted_ref = decode_wav(SOUND_MUTED).unwrap();
         assert_eq!(result.samples.len(), muted_ref.samples.len());
+        assert!(warning.is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

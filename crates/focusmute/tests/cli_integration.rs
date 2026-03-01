@@ -149,3 +149,64 @@ fn cli_monitor_help_with_config() {
         .success()
         .stdout(predicate::str::contains("monitor"));
 }
+
+// ── T1: Expanded CLI integration tests ──
+
+#[test]
+fn cli_status_json_produces_valid_json() {
+    let output = cli()
+        .args(["--json", "status"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output).expect("status --json should produce valid JSON");
+    assert!(json["version"].is_string(), "should have version string");
+    assert!(json["config"].is_object(), "should have config object");
+}
+
+#[test]
+fn cli_devices_json_produces_valid_json() {
+    let output = cli()
+        .args(["--json", "devices"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output).expect("devices --json should produce valid JSON");
+    assert!(json["count"].is_number(), "should have count field");
+    assert!(json["devices"].is_array(), "should have devices array");
+}
+
+#[test]
+fn cli_predict_missing_file_errors() {
+    cli()
+        .args(["predict", "/nonexistent/schema.json"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn cli_monitor_on_mute_flag_accepted() {
+    // --on-mute flag should be accepted (visible in --help output)
+    cli()
+        .args(["monitor", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--on-mute"));
+}
+
+#[test]
+fn cli_monitor_on_unmute_flag_accepted() {
+    cli()
+        .args(["monitor", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--on-unmute"));
+}

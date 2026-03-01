@@ -8,31 +8,70 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Header comment prepended to saved config files.
-const CONFIG_HEADER: &str =
-    "# FocusMute configuration — changes made outside the app may be overwritten.\n\n";
+const CONFIG_HEADER: &str = "\
+# FocusMute configuration
+#
+# Location:
+#   Windows: %APPDATA%\\Focusmute\\config.toml
+#   Linux:   ~/.config/focusmute/config.toml
+#
+# This file is auto-generated when settings are saved.
+# Manual edits are supported — missing keys use default values.
 
+";
+
+// ── Section sub-structs ──
+
+/// Mute indicator settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
+pub struct IndicatorConfig {
     /// Mute indicator color (hex or name). Default: "#FF0000" (red).
     #[serde(default = "default_mute_color")]
     pub mute_color: String,
-
-    /// Global hotkey to toggle mute. Default: "Ctrl+Shift+M". Format: "Modifier+Key" or just "Key".
-    #[serde(default = "default_hotkey")]
-    pub hotkey: String,
-
-    /// Play a sound when mute state changes.
-    #[serde(default = "default_true")]
-    pub sound_enabled: bool,
-
-    /// Start application on login.
-    #[serde(default)]
-    pub autostart: bool,
 
     /// Which inputs to show mute indicator on. Default: "all".
     /// Values: "all", "1", "2", "1,2", etc. (1-based input numbers).
     #[serde(default = "default_mute_inputs")]
     pub mute_inputs: String,
+
+    /// Per-input mute colors (1-based keys). Overrides `mute_color` for specific inputs.
+    /// Example in TOML: `[indicator.input_colors]` / `1 = "#FF0000"` / `2 = "#0000FF"`
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub input_colors: HashMap<String, String>,
+}
+
+impl Default for IndicatorConfig {
+    fn default() -> Self {
+        Self {
+            mute_color: default_mute_color(),
+            mute_inputs: default_mute_inputs(),
+            input_colors: HashMap::new(),
+        }
+    }
+}
+
+/// Keyboard / hotkey settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyboardConfig {
+    /// Global hotkey to toggle mute. Default: "Ctrl+Shift+M". Format: "Modifier+Key" or just "Key".
+    #[serde(default = "default_hotkey")]
+    pub hotkey: String,
+}
+
+impl Default for KeyboardConfig {
+    fn default() -> Self {
+        Self {
+            hotkey: default_hotkey(),
+        }
+    }
+}
+
+/// Sound feedback settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoundConfig {
+    /// Play a sound when mute state changes.
+    #[serde(default = "default_true")]
+    pub sound_enabled: bool,
 
     /// Path to custom mute sound WAV file. Empty = use built-in.
     #[serde(default)]
@@ -41,11 +80,37 @@ pub struct Config {
     /// Path to custom unmute sound WAV file. Empty = use built-in.
     #[serde(default)]
     pub unmute_sound_path: String,
+}
+
+impl Default for SoundConfig {
+    fn default() -> Self {
+        Self {
+            sound_enabled: true,
+            mute_sound_path: String::new(),
+            unmute_sound_path: String::new(),
+        }
+    }
+}
+
+/// System / startup settings.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SystemConfig {
+    /// Start application on login.
+    #[serde(default)]
+    pub autostart: bool,
 
     /// Preferred device serial number. Empty = auto-select first device.
     #[serde(default)]
     pub device_serial: String,
 
+    /// Show desktop notification on mute state change.
+    #[serde(default)]
+    pub notifications_enabled: bool,
+}
+
+/// Mute state change hooks.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HooksConfig {
     /// Command to run when muted. Empty = disabled.
     #[serde(default)]
     pub on_mute_command: String,
@@ -53,16 +118,9 @@ pub struct Config {
     /// Command to run when unmuted. Empty = disabled.
     #[serde(default)]
     pub on_unmute_command: String,
-
-    /// Per-input mute colors (1-based keys). Overrides `mute_color` for specific inputs.
-    /// Example in TOML: `[input_colors]` / `1 = "#FF0000"` / `2 = "#0000FF"`
-    #[serde(default)]
-    pub input_colors: HashMap<String, String>,
-
-    /// Show desktop notification on mute state change.
-    #[serde(default)]
-    pub notifications_enabled: bool,
 }
+
+// ── Default value helpers ──
 
 fn default_mute_color() -> String {
     "#FF0000".into()
@@ -78,24 +136,88 @@ fn default_true() -> bool {
     true
 }
 
-impl Default for Config {
-    fn default() -> Self {
+// ── Top-level config ──
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    #[serde(default)]
+    pub indicator: IndicatorConfig,
+
+    #[serde(default)]
+    pub keyboard: KeyboardConfig,
+
+    #[serde(default)]
+    pub sound: SoundConfig,
+
+    #[serde(default)]
+    pub system: SystemConfig,
+
+    #[serde(default)]
+    pub hooks: HooksConfig,
+}
+
+// ── Legacy flat config for migration ──
+
+/// Old flat config format (pre-v0.5.0). Used only for deserialization during migration.
+#[derive(Deserialize)]
+struct LegacyConfig {
+    #[serde(default = "default_mute_color")]
+    mute_color: String,
+    #[serde(default = "default_hotkey")]
+    hotkey: String,
+    #[serde(default = "default_true")]
+    sound_enabled: bool,
+    #[serde(default)]
+    autostart: bool,
+    #[serde(default = "default_mute_inputs")]
+    mute_inputs: String,
+    #[serde(default)]
+    mute_sound_path: String,
+    #[serde(default)]
+    unmute_sound_path: String,
+    #[serde(default)]
+    device_serial: String,
+    #[serde(default)]
+    on_mute_command: String,
+    #[serde(default)]
+    on_unmute_command: String,
+    #[serde(default)]
+    input_colors: HashMap<String, String>,
+    #[serde(default)]
+    notifications_enabled: bool,
+}
+
+impl From<LegacyConfig> for Config {
+    fn from(legacy: LegacyConfig) -> Self {
         Config {
-            mute_color: default_mute_color(),
-            hotkey: default_hotkey(),
-            sound_enabled: true,
-            autostart: false,
-            mute_inputs: default_mute_inputs(),
-            mute_sound_path: String::new(),
-            unmute_sound_path: String::new(),
-            device_serial: String::new(),
-            on_mute_command: String::new(),
-            on_unmute_command: String::new(),
-            input_colors: HashMap::new(),
-            notifications_enabled: false,
+            indicator: IndicatorConfig {
+                mute_color: legacy.mute_color,
+                mute_inputs: legacy.mute_inputs,
+                input_colors: legacy.input_colors,
+            },
+            keyboard: KeyboardConfig {
+                hotkey: legacy.hotkey,
+            },
+            sound: SoundConfig {
+                sound_enabled: legacy.sound_enabled,
+                mute_sound_path: legacy.mute_sound_path,
+                unmute_sound_path: legacy.unmute_sound_path,
+            },
+            system: SystemConfig {
+                autostart: legacy.autostart,
+                device_serial: legacy.device_serial,
+                notifications_enabled: legacy.notifications_enabled,
+            },
+            hooks: HooksConfig {
+                on_mute_command: legacy.on_mute_command,
+                on_unmute_command: legacy.on_unmute_command,
+            },
         }
     }
 }
+
+// ── Mute inputs ──
 
 /// Parsed mute input selection.
 #[derive(Debug, Clone, PartialEq)]
@@ -117,6 +239,8 @@ impl std::fmt::Display for MuteInputs {
         }
     }
 }
+
+// ── Validation ──
 
 /// Validation errors that [`Config::validate`] can return.
 #[derive(Debug, Clone, PartialEq)]
@@ -148,6 +272,8 @@ impl fmt::Display for ValidationError {
         }
     }
 }
+
+// ── Config impl ──
 
 impl Config {
     /// Platform-specific config directory.
@@ -183,7 +309,7 @@ impl Config {
 
     /// Save config to an arbitrary path atomically (write to temp file, then rename).
     ///
-    /// A header comment is prepended to warn that manual edits may be overwritten.
+    /// A header comment is prepended to the saved file.
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -218,18 +344,29 @@ impl Config {
     ///
     /// Returns `(defaults, [])` if the file doesn't exist.
     /// Returns `(defaults, [warning])` if the file exists but can't be parsed.
+    ///
+    /// Supports both the current nested format (`[indicator]`, `[keyboard]`, etc.)
+    /// and the legacy flat format (pre-v0.5.0). Legacy configs are silently migrated
+    /// on the next save.
     pub fn load_from(path: &Path) -> (Self, Vec<String>) {
         match std::fs::read_to_string(path) {
-            Ok(contents) => match toml::from_str(&contents) {
-                Ok(config) => (config, vec![]),
-                Err(e) => {
-                    let warning = format!(
-                        "config parse error ({}), using defaults: {e}",
-                        path.display()
-                    );
-                    (Self::default(), vec![warning])
+            Ok(contents) => {
+                // Try new nested format first
+                if let Ok(config) = toml::from_str::<Config>(&contents) {
+                    return (config, vec![]);
                 }
-            },
+                // Fall back to legacy flat format
+                match toml::from_str::<LegacyConfig>(&contents) {
+                    Ok(legacy) => (Config::from(legacy), vec![]),
+                    Err(e) => {
+                        let warning = format!(
+                            "config parse error ({}), using defaults: {e}",
+                            path.display()
+                        );
+                        (Self::default(), vec![warning])
+                    }
+                }
+            }
             Err(_) => (Self::default(), vec![]),
         }
     }
@@ -250,7 +387,7 @@ impl Config {
     ///
     /// Returns `MuteInputs::All` for empty or unparseable values.
     pub fn parse_mute_inputs(&self) -> MuteInputs {
-        let s = self.mute_inputs.trim();
+        let s = self.indicator.mute_inputs.trim();
         if s.is_empty() || s.eq_ignore_ascii_case("all") {
             return MuteInputs::All;
         }
@@ -328,23 +465,23 @@ impl Config {
         let mut errors = Vec::new();
 
         // Validate color
-        if let Err(e) = crate::led::parse_color(&self.mute_color) {
+        if let Err(e) = crate::led::parse_color(&self.indicator.mute_color) {
             errors.push(ValidationError::InvalidColor(e.to_string()));
         }
 
         // Validate hotkey
-        if self.hotkey.trim().is_empty() {
+        if self.keyboard.hotkey.trim().is_empty() {
             errors.push(ValidationError::EmptyHotkey);
         }
 
         // Validate sound paths
-        if let Err(e) = Self::validate_sound_path(&self.mute_sound_path, max_sound_bytes) {
+        if let Err(e) = Self::validate_sound_path(&self.sound.mute_sound_path, max_sound_bytes) {
             errors.push(ValidationError::InvalidSoundPath {
                 field: "mute_sound_path",
                 reason: e.to_string(),
             });
         }
-        if let Err(e) = Self::validate_sound_path(&self.unmute_sound_path, max_sound_bytes) {
+        if let Err(e) = Self::validate_sound_path(&self.sound.unmute_sound_path, max_sound_bytes) {
             errors.push(ValidationError::InvalidSoundPath {
                 field: "unmute_sound_path",
                 reason: e.to_string(),
@@ -359,7 +496,7 @@ impl Config {
         }
 
         // Validate input_colors entries
-        for (key, value) in &self.input_colors {
+        for (key, value) in &self.indicator.input_colors {
             if let Err(e) = crate::led::parse_color(value) {
                 errors.push(ValidationError::InvalidInputColor {
                     input: key.clone(),
@@ -445,52 +582,63 @@ mod tests {
     #[test]
     fn defaults() {
         let c = Config::default();
-        assert_eq!(c.mute_color, "#FF0000");
-        assert_eq!(c.hotkey, "Ctrl+Shift+M");
-        assert!(c.sound_enabled);
-        assert!(!c.autostart);
-        assert_eq!(c.mute_inputs, "all");
+        assert_eq!(c.indicator.mute_color, "#FF0000");
+        assert_eq!(c.keyboard.hotkey, "Ctrl+Shift+M");
+        assert!(c.sound.sound_enabled);
+        assert!(!c.system.autostart);
+        assert_eq!(c.indicator.mute_inputs, "all");
     }
 
     #[test]
     fn serialize_roundtrip() {
         let c = Config {
-            mute_color: "#00FF00".into(),
-            hotkey: "F12".into(),
-            sound_enabled: false,
-            autostart: true,
-            mute_inputs: "1,2".into(),
+            indicator: IndicatorConfig {
+                mute_color: "#00FF00".into(),
+                mute_inputs: "1,2".into(),
+                ..Default::default()
+            },
+            keyboard: KeyboardConfig {
+                hotkey: "F12".into(),
+            },
+            sound: SoundConfig {
+                sound_enabled: false,
+                ..Default::default()
+            },
+            system: SystemConfig {
+                autostart: true,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let toml_str = toml::to_string_pretty(&c).unwrap();
         let c2: Config = toml::from_str(&toml_str).unwrap();
-        assert_eq!(c2.mute_color, "#00FF00");
-        assert_eq!(c2.hotkey, "F12");
-        assert!(!c2.sound_enabled);
-        assert!(c2.autostart);
-        assert_eq!(c2.mute_inputs, "1,2");
+        assert_eq!(c2.indicator.mute_color, "#00FF00");
+        assert_eq!(c2.keyboard.hotkey, "F12");
+        assert!(!c2.sound.sound_enabled);
+        assert!(c2.system.autostart);
+        assert_eq!(c2.indicator.mute_inputs, "1,2");
     }
 
     #[test]
     fn partial_toml_fills_defaults() {
-        let toml_str = "mute_color = \"#0000FF\"";
+        let toml_str = "[indicator]\nmute_color = \"#0000FF\"";
         let c: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(c.mute_color, "#0000FF");
+        assert_eq!(c.indicator.mute_color, "#0000FF");
         // Missing fields get defaults
-        assert_eq!(c.hotkey, "Ctrl+Shift+M");
-        assert!(c.sound_enabled);
-        assert!(!c.autostart);
-        assert_eq!(c.mute_inputs, "all");
+        assert_eq!(c.keyboard.hotkey, "Ctrl+Shift+M");
+        assert!(c.sound.sound_enabled);
+        assert!(!c.system.autostart);
+        assert_eq!(c.indicator.mute_inputs, "all");
     }
 
     #[test]
     fn empty_toml_gives_defaults() {
         let c: Config = toml::from_str("").unwrap();
-        assert_eq!(c.mute_color, "#FF0000");
-        assert_eq!(c.hotkey, "Ctrl+Shift+M");
-        assert!(c.sound_enabled);
-        assert!(!c.autostart);
-        assert_eq!(c.mute_inputs, "all");
+        assert_eq!(c.indicator.mute_color, "#FF0000");
+        assert_eq!(c.keyboard.hotkey, "Ctrl+Shift+M");
+        assert!(c.sound.sound_enabled);
+        assert!(!c.system.autostart);
+        assert_eq!(c.indicator.mute_inputs, "all");
     }
 
     #[test]
@@ -501,15 +649,15 @@ mod tests {
         assert!(result.is_err());
         // After error, the app falls back to defaults
         let fallback = Config::default();
-        assert_eq!(fallback.mute_color, "#FF0000");
-        assert_eq!(fallback.hotkey, "Ctrl+Shift+M");
+        assert_eq!(fallback.indicator.mute_color, "#FF0000");
+        assert_eq!(fallback.keyboard.hotkey, "Ctrl+Shift+M");
     }
 
     #[test]
     fn wrong_type_toml_gives_defaults() {
         // A valid TOML key with the wrong type (string where bool expected)
         let result: std::result::Result<Config, _> =
-            toml::from_str("sound_enabled = \"not a bool\"");
+            toml::from_str("[sound]\nsound_enabled = \"not a bool\"");
         assert!(result.is_err());
     }
 
@@ -534,18 +682,216 @@ mod tests {
         assert_eq!(log.file_name().unwrap(), "focusmute.log");
     }
 
+    // ── Legacy migration ──
+
     #[test]
-    fn backward_compat_old_toml_without_mute_inputs() {
-        // Simulates an old config file that doesn't have mute_inputs
-        let toml_str = r##"
+    fn legacy_flat_config_loads_correctly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r##"
+mute_color = "#00FF00"
+hotkey = "F12"
+sound_enabled = false
+autostart = true
+mute_inputs = "1,2"
+mute_sound_path = "/tmp/mute.wav"
+unmute_sound_path = "/tmp/unmute.wav"
+device_serial = "ABC123"
+on_mute_command = "echo muted"
+on_unmute_command = "echo unmuted"
+notifications_enabled = true
+"##,
+        )
+        .unwrap();
+
+        let (c, warnings) = Config::load_from(&path);
+        assert!(warnings.is_empty(), "warnings: {warnings:?}");
+        assert_eq!(c.indicator.mute_color, "#00FF00");
+        assert_eq!(c.keyboard.hotkey, "F12");
+        assert!(!c.sound.sound_enabled);
+        assert!(c.system.autostart);
+        assert_eq!(c.indicator.mute_inputs, "1,2");
+        assert_eq!(c.sound.mute_sound_path, "/tmp/mute.wav");
+        assert_eq!(c.sound.unmute_sound_path, "/tmp/unmute.wav");
+        assert_eq!(c.system.device_serial, "ABC123");
+        assert_eq!(c.hooks.on_mute_command, "echo muted");
+        assert_eq!(c.hooks.on_unmute_command, "echo unmuted");
+        assert!(c.system.notifications_enabled);
+    }
+
+    #[test]
+    fn legacy_config_migrated_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        // Write legacy flat format
+        std::fs::write(&path, "mute_color = \"#00FF00\"\nhotkey = \"F12\"\n").unwrap();
+
+        // Load (migrates from legacy)
+        let (config, warnings) = Config::load_from(&path);
+        assert!(warnings.is_empty());
+        assert_eq!(config.indicator.mute_color, "#00FF00");
+
+        // Save (writes new nested format)
+        config.save_to(&path).unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.contains("[indicator]"),
+            "saved file should have [indicator] section"
+        );
+        assert!(
+            contents.contains("[keyboard]"),
+            "saved file should have [keyboard] section"
+        );
+
+        // Re-load should work as new nested format
+        let (reloaded, warnings) = Config::load_from(&path);
+        assert!(warnings.is_empty());
+        assert_eq!(reloaded.indicator.mute_color, "#00FF00");
+        assert_eq!(reloaded.keyboard.hotkey, "F12");
+    }
+
+    #[test]
+    fn legacy_partial_config_fills_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        // Old config missing newer fields
+        std::fs::write(
+            &path,
+            r##"
 mute_color = "#FF0000"
 hotkey = "Ctrl+Shift+M"
 sound_enabled = true
 autostart = false
-"##;
-        let c: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(c.mute_inputs, "all");
+"##,
+        )
+        .unwrap();
+
+        let (c, warnings) = Config::load_from(&path);
+        assert!(warnings.is_empty());
+        assert_eq!(c.indicator.mute_inputs, "all");
+        assert!(c.sound.mute_sound_path.is_empty());
+        assert!(c.system.device_serial.is_empty());
         assert_eq!(c.parse_mute_inputs(), MuteInputs::All);
+    }
+
+    #[test]
+    fn save_to_omits_empty_input_colors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        Config::default().save_to(&path).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !contents.contains("[indicator.input_colors]"),
+            "empty input_colors should not produce a table"
+        );
+    }
+
+    #[test]
+    fn new_nested_config_loads_correctly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r##"
+[indicator]
+mute_color = "#00FF00"
+mute_inputs = "1"
+
+[keyboard]
+hotkey = "F12"
+
+[sound]
+sound_enabled = false
+mute_sound_path = "/tmp/mute.wav"
+unmute_sound_path = ""
+
+[system]
+autostart = true
+device_serial = "SER123"
+notifications_enabled = true
+
+[hooks]
+on_mute_command = "echo m"
+on_unmute_command = "echo u"
+"##,
+        )
+        .unwrap();
+
+        let (c, warnings) = Config::load_from(&path);
+        assert!(warnings.is_empty());
+        assert_eq!(c.indicator.mute_color, "#00FF00");
+        assert_eq!(c.indicator.mute_inputs, "1");
+        assert_eq!(c.keyboard.hotkey, "F12");
+        assert!(!c.sound.sound_enabled);
+        assert_eq!(c.sound.mute_sound_path, "/tmp/mute.wav");
+        assert!(c.system.autostart);
+        assert_eq!(c.system.device_serial, "SER123");
+        assert!(c.system.notifications_enabled);
+        assert_eq!(c.hooks.on_mute_command, "echo m");
+        assert_eq!(c.hooks.on_unmute_command, "echo u");
+    }
+
+    #[test]
+    fn save_load_roundtrip_nested() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let config = Config {
+            indicator: IndicatorConfig {
+                mute_color: "#00FF00".into(),
+                mute_inputs: "1,2".into(),
+                input_colors: HashMap::from([
+                    ("1".into(), "#FF0000".into()),
+                    ("2".into(), "#0000FF".into()),
+                ]),
+            },
+            keyboard: KeyboardConfig {
+                hotkey: "Alt+M".into(),
+            },
+            sound: SoundConfig {
+                sound_enabled: false,
+                mute_sound_path: "/tmp/mute.wav".into(),
+                unmute_sound_path: "/tmp/unmute.wav".into(),
+            },
+            system: SystemConfig {
+                autostart: true,
+                device_serial: "ABC123".into(),
+                notifications_enabled: true,
+            },
+            hooks: HooksConfig {
+                on_mute_command: "echo muted".into(),
+                on_unmute_command: "echo unmuted".into(),
+            },
+        };
+        config.save_to(&path).unwrap();
+
+        let (loaded, warnings) = Config::load_from(&path);
+        assert!(warnings.is_empty());
+        assert_eq!(loaded.indicator.mute_color, config.indicator.mute_color);
+        assert_eq!(loaded.keyboard.hotkey, config.keyboard.hotkey);
+        assert_eq!(loaded.sound.sound_enabled, config.sound.sound_enabled);
+        assert_eq!(loaded.system.autostart, config.system.autostart);
+        assert_eq!(loaded.indicator.mute_inputs, config.indicator.mute_inputs);
+        assert_eq!(loaded.sound.mute_sound_path, config.sound.mute_sound_path);
+        assert_eq!(
+            loaded.sound.unmute_sound_path,
+            config.sound.unmute_sound_path
+        );
+        assert_eq!(loaded.system.device_serial, config.system.device_serial);
+        assert_eq!(loaded.hooks.on_mute_command, config.hooks.on_mute_command);
+        assert_eq!(
+            loaded.hooks.on_unmute_command,
+            config.hooks.on_unmute_command
+        );
+        assert_eq!(loaded.indicator.input_colors, config.indicator.input_colors);
+        assert_eq!(
+            loaded.system.notifications_enabled,
+            config.system.notifications_enabled
+        );
     }
 
     // ── parse_mute_inputs ──
@@ -553,7 +899,10 @@ autostart = false
     #[test]
     fn parse_mute_inputs_all() {
         let c = Config {
-            mute_inputs: "all".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "all".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::All);
@@ -562,12 +911,18 @@ autostart = false
     #[test]
     fn parse_mute_inputs_all_case_insensitive() {
         let c = Config {
-            mute_inputs: "ALL".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "ALL".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::All);
         let c2 = Config {
-            mute_inputs: "All".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "All".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c2.parse_mute_inputs(), MuteInputs::All);
@@ -576,7 +931,10 @@ autostart = false
     #[test]
     fn parse_mute_inputs_empty_is_all() {
         let c = Config {
-            mute_inputs: "".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::All);
@@ -585,7 +943,10 @@ autostart = false
     #[test]
     fn parse_mute_inputs_whitespace_is_all() {
         let c = Config {
-            mute_inputs: "  ".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "  ".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::All);
@@ -594,7 +955,10 @@ autostart = false
     #[test]
     fn parse_mute_inputs_single() {
         let c = Config {
-            mute_inputs: "1".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "1".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::Specific(vec![0]));
@@ -603,7 +967,10 @@ autostart = false
     #[test]
     fn parse_mute_inputs_single_input_2() {
         let c = Config {
-            mute_inputs: "2".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "2".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::Specific(vec![1]));
@@ -612,7 +979,10 @@ autostart = false
     #[test]
     fn parse_mute_inputs_multiple() {
         let c = Config {
-            mute_inputs: "1,2".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "1,2".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::Specific(vec![0, 1]));
@@ -621,7 +991,10 @@ autostart = false
     #[test]
     fn parse_mute_inputs_with_spaces() {
         let c = Config {
-            mute_inputs: " 1 , 2 ".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: " 1 , 2 ".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::Specific(vec![0, 1]));
@@ -630,7 +1003,10 @@ autostart = false
     #[test]
     fn parse_mute_inputs_deduplicates() {
         let c = Config {
-            mute_inputs: "1,1,2,2".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "1,1,2,2".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::Specific(vec![0, 1]));
@@ -639,7 +1015,10 @@ autostart = false
     #[test]
     fn parse_mute_inputs_sorts() {
         let c = Config {
-            mute_inputs: "2,1".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "2,1".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::Specific(vec![0, 1]));
@@ -649,7 +1028,10 @@ autostart = false
     fn parse_mute_inputs_zero_ignored() {
         // 0 is invalid (1-based), so it should be ignored
         let c = Config {
-            mute_inputs: "0".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "0".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::All);
@@ -658,7 +1040,10 @@ autostart = false
     #[test]
     fn parse_mute_inputs_garbage_is_all() {
         let c = Config {
-            mute_inputs: "abc".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "abc".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert_eq!(c.parse_mute_inputs(), MuteInputs::All);
@@ -669,7 +1054,10 @@ autostart = false
     #[test]
     fn validate_all_always_ok() {
         let c = Config {
-            mute_inputs: "all".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "all".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert!(c.validate_mute_inputs(2).is_ok());
@@ -679,7 +1067,10 @@ autostart = false
     #[test]
     fn validate_within_range() {
         let c = Config {
-            mute_inputs: "1,2".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "1,2".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert!(c.validate_mute_inputs(2).is_ok());
@@ -688,7 +1079,10 @@ autostart = false
     #[test]
     fn validate_out_of_range() {
         let c = Config {
-            mute_inputs: "3".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "3".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let err = c.validate_mute_inputs(2).unwrap_err();
@@ -698,12 +1092,18 @@ autostart = false
     #[test]
     fn validate_single_input_device() {
         let c = Config {
-            mute_inputs: "1".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "1".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert!(c.validate_mute_inputs(1).is_ok());
         let c2 = Config {
-            mute_inputs: "2".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "2".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert!(c2.validate_mute_inputs(1).is_err());
@@ -714,35 +1114,24 @@ autostart = false
     #[test]
     fn defaults_include_empty_sound_paths() {
         let c = Config::default();
-        assert!(c.mute_sound_path.is_empty());
-        assert!(c.unmute_sound_path.is_empty());
+        assert!(c.sound.mute_sound_path.is_empty());
+        assert!(c.sound.unmute_sound_path.is_empty());
     }
 
     #[test]
     fn serialize_roundtrip_with_sound_paths() {
         let c = Config {
-            mute_sound_path: "C:\\sounds\\mute.wav".into(),
-            unmute_sound_path: "C:\\sounds\\unmute.wav".into(),
+            sound: SoundConfig {
+                mute_sound_path: "C:\\sounds\\mute.wav".into(),
+                unmute_sound_path: "C:\\sounds\\unmute.wav".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let toml_str = toml::to_string_pretty(&c).unwrap();
         let c2: Config = toml::from_str(&toml_str).unwrap();
-        assert_eq!(c2.mute_sound_path, "C:\\sounds\\mute.wav");
-        assert_eq!(c2.unmute_sound_path, "C:\\sounds\\unmute.wav");
-    }
-
-    #[test]
-    fn backward_compat_old_toml_without_sound_paths() {
-        let toml_str = r##"
-mute_color = "#FF0000"
-hotkey = "Ctrl+Shift+M"
-sound_enabled = true
-autostart = false
-mute_inputs = "all"
-"##;
-        let c: Config = toml::from_str(toml_str).unwrap();
-        assert!(c.mute_sound_path.is_empty());
-        assert!(c.unmute_sound_path.is_empty());
+        assert_eq!(c2.sound.mute_sound_path, "C:\\sounds\\mute.wav");
+        assert_eq!(c2.sound.unmute_sound_path, "C:\\sounds\\unmute.wav");
     }
 
     #[test]
@@ -804,7 +1193,10 @@ mute_inputs = "all"
     #[test]
     fn validate_invalid_color() {
         let c = Config {
-            mute_color: "chartreuse".into(),
+            indicator: IndicatorConfig {
+                mute_color: "chartreuse".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let errs = c.validate(None, 10_000_000).unwrap_err();
@@ -816,7 +1208,9 @@ mute_inputs = "all"
     #[test]
     fn validate_empty_hotkey() {
         let c = Config {
-            hotkey: "  ".into(),
+            keyboard: KeyboardConfig {
+                hotkey: "  ".into(),
+            },
             ..Config::default()
         };
         let errs = c.validate(None, 10_000_000).unwrap_err();
@@ -828,7 +1222,10 @@ mute_inputs = "all"
     #[test]
     fn validate_bad_sound_path() {
         let c = Config {
-            mute_sound_path: "/no/such/file.wav".into(),
+            sound: SoundConfig {
+                mute_sound_path: "/no/such/file.wav".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let errs = c.validate(None, 10_000_000).unwrap_err();
@@ -845,7 +1242,10 @@ mute_inputs = "all"
     #[test]
     fn validate_bad_unmute_sound_path() {
         let c = Config {
-            unmute_sound_path: "/no/such/file.wav".into(),
+            sound: SoundConfig {
+                unmute_sound_path: "/no/such/file.wav".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let errs = c.validate(None, 10_000_000).unwrap_err();
@@ -862,7 +1262,10 @@ mute_inputs = "all"
     #[test]
     fn validate_bad_mute_inputs() {
         let c = Config {
-            mute_inputs: "5".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "5".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let errs = c.validate(Some(2), 10_000_000).unwrap_err();
@@ -873,7 +1276,10 @@ mute_inputs = "all"
     #[test]
     fn validate_mute_inputs_skipped_without_count() {
         let c = Config {
-            mute_inputs: "99".into(),
+            indicator: IndicatorConfig {
+                mute_inputs: "99".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         // Without input_count, mute_inputs validation is skipped
@@ -883,11 +1289,17 @@ mute_inputs = "all"
     #[test]
     fn validate_collects_multiple_errors() {
         let c = Config {
-            mute_color: "not-a-color".into(),
-            hotkey: "".into(),
-            mute_sound_path: "/bad/path.wav".into(),
-            unmute_sound_path: "/bad/path2.wav".into(),
-            mute_inputs: "99".into(),
+            indicator: IndicatorConfig {
+                mute_color: "not-a-color".into(),
+                mute_inputs: "99".into(),
+                ..Default::default()
+            },
+            keyboard: KeyboardConfig { hotkey: "".into() },
+            sound: SoundConfig {
+                mute_sound_path: "/bad/path.wav".into(),
+                unmute_sound_path: "/bad/path2.wav".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let errs = c.validate(Some(2), 10_000_000).unwrap_err();
@@ -916,7 +1328,10 @@ mute_inputs = "all"
     fn validate_valid_hex_color_and_named() {
         for color in &["#FF0000", "red", "blue", "#ABCDEF"] {
             let c = Config {
-                mute_color: color.to_string(),
+                indicator: IndicatorConfig {
+                    mute_color: color.to_string(),
+                    ..Default::default()
+                },
                 ..Config::default()
             };
             assert!(c.validate(None, 10_000_000).is_ok(), "failed for {color}");
@@ -935,49 +1350,55 @@ mute_inputs = "all"
     #[test]
     fn config_round_trip_all_fields() {
         let config = Config {
-            mute_color: "#00FF00".into(),
-            hotkey: "Alt+M".into(),
-            sound_enabled: false,
-            autostart: true,
-            mute_inputs: "1,2".into(),
-            mute_sound_path: "/tmp/mute.wav".into(),
-            unmute_sound_path: "/tmp/unmute.wav".into(),
-            device_serial: "ABC123".into(),
-            on_mute_command: "echo muted".into(),
-            on_unmute_command: "echo unmuted".into(),
-            input_colors: HashMap::from([
-                ("1".into(), "#FF0000".into()),
-                ("2".into(), "#0000FF".into()),
-            ]),
-            notifications_enabled: true,
+            indicator: IndicatorConfig {
+                mute_color: "#00FF00".into(),
+                mute_inputs: "1,2".into(),
+                input_colors: HashMap::from([
+                    ("1".into(), "#FF0000".into()),
+                    ("2".into(), "#0000FF".into()),
+                ]),
+            },
+            keyboard: KeyboardConfig {
+                hotkey: "Alt+M".into(),
+            },
+            sound: SoundConfig {
+                sound_enabled: false,
+                mute_sound_path: "/tmp/mute.wav".into(),
+                unmute_sound_path: "/tmp/unmute.wav".into(),
+            },
+            system: SystemConfig {
+                autostart: true,
+                device_serial: "ABC123".into(),
+                notifications_enabled: true,
+            },
+            hooks: HooksConfig {
+                on_mute_command: "echo muted".into(),
+                on_unmute_command: "echo unmuted".into(),
+            },
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let loaded: Config = toml::from_str(&toml_str).unwrap();
-        assert_eq!(loaded.mute_color, config.mute_color);
-        assert_eq!(loaded.hotkey, config.hotkey);
-        assert_eq!(loaded.sound_enabled, config.sound_enabled);
-        assert_eq!(loaded.autostart, config.autostart);
-        assert_eq!(loaded.mute_inputs, config.mute_inputs);
-        assert_eq!(loaded.mute_sound_path, config.mute_sound_path);
-        assert_eq!(loaded.unmute_sound_path, config.unmute_sound_path);
-        assert_eq!(loaded.device_serial, config.device_serial);
-        assert_eq!(loaded.on_mute_command, config.on_mute_command);
-        assert_eq!(loaded.on_unmute_command, config.on_unmute_command);
-        assert_eq!(loaded.input_colors, config.input_colors);
-        assert_eq!(loaded.notifications_enabled, config.notifications_enabled);
-    }
-
-    #[test]
-    fn backward_compat_old_toml_without_device_serial() {
-        let toml_str = r##"
-mute_color = "#FF0000"
-hotkey = "Ctrl+Shift+M"
-sound_enabled = true
-autostart = false
-mute_inputs = "all"
-"##;
-        let c: Config = toml::from_str(toml_str).unwrap();
-        assert!(c.device_serial.is_empty());
+        assert_eq!(loaded.indicator.mute_color, config.indicator.mute_color);
+        assert_eq!(loaded.keyboard.hotkey, config.keyboard.hotkey);
+        assert_eq!(loaded.sound.sound_enabled, config.sound.sound_enabled);
+        assert_eq!(loaded.system.autostart, config.system.autostart);
+        assert_eq!(loaded.indicator.mute_inputs, config.indicator.mute_inputs);
+        assert_eq!(loaded.sound.mute_sound_path, config.sound.mute_sound_path);
+        assert_eq!(
+            loaded.sound.unmute_sound_path,
+            config.sound.unmute_sound_path
+        );
+        assert_eq!(loaded.system.device_serial, config.system.device_serial);
+        assert_eq!(loaded.hooks.on_mute_command, config.hooks.on_mute_command);
+        assert_eq!(
+            loaded.hooks.on_unmute_command,
+            config.hooks.on_unmute_command
+        );
+        assert_eq!(loaded.indicator.input_colors, config.indicator.input_colors);
+        assert_eq!(
+            loaded.system.notifications_enabled,
+            config.system.notifications_enabled
+        );
     }
 
     // ── input_colors validation ──
@@ -985,10 +1406,13 @@ mute_inputs = "all"
     #[test]
     fn validate_input_colors_valid() {
         let c = Config {
-            input_colors: HashMap::from([
-                ("1".into(), "#FF0000".into()),
-                ("2".into(), "blue".into()),
-            ]),
+            indicator: IndicatorConfig {
+                input_colors: HashMap::from([
+                    ("1".into(), "#FF0000".into()),
+                    ("2".into(), "blue".into()),
+                ]),
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert!(c.validate(Some(2), 10_000_000).is_ok());
@@ -997,7 +1421,10 @@ mute_inputs = "all"
     #[test]
     fn validate_input_colors_invalid_color_value() {
         let c = Config {
-            input_colors: HashMap::from([("1".into(), "not-a-color".into())]),
+            indicator: IndicatorConfig {
+                input_colors: HashMap::from([("1".into(), "not-a-color".into())]),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let errs = c.validate(Some(2), 10_000_000).unwrap_err();
@@ -1010,7 +1437,10 @@ mute_inputs = "all"
     #[test]
     fn validate_input_colors_out_of_range_key() {
         let c = Config {
-            input_colors: HashMap::from([("5".into(), "#FF0000".into())]),
+            indicator: IndicatorConfig {
+                input_colors: HashMap::from([("5".into(), "#FF0000".into())]),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let errs = c.validate(Some(2), 10_000_000).unwrap_err();
@@ -1023,7 +1453,10 @@ mute_inputs = "all"
     #[test]
     fn validate_input_colors_non_numeric_key() {
         let c = Config {
-            input_colors: HashMap::from([("abc".into(), "#FF0000".into())]),
+            indicator: IndicatorConfig {
+                input_colors: HashMap::from([("abc".into(), "#FF0000".into())]),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let errs = c.validate(Some(2), 10_000_000).unwrap_err();
@@ -1036,7 +1469,10 @@ mute_inputs = "all"
     #[test]
     fn validate_input_colors_key_range_skipped_without_input_count() {
         let c = Config {
-            input_colors: HashMap::from([("99".into(), "#FF0000".into())]),
+            indicator: IndicatorConfig {
+                input_colors: HashMap::from([("99".into(), "#FF0000".into())]),
+                ..Default::default()
+            },
             ..Config::default()
         };
         // Without input_count, key range check is skipped (only color value is validated)
@@ -1046,26 +1482,38 @@ mute_inputs = "all"
     #[test]
     fn load_ignores_header_comment() {
         // Config with header comment (as produced by save()) should parse fine
-        let toml_str = r##"# FocusMute configuration — changes made outside the app may be overwritten.
+        let toml_str = r##"# FocusMute configuration
+#
+# Location:
+#   Windows: %APPDATA%\Focusmute\config.toml
+#   Linux:   ~/.config/focusmute/config.toml
+#
+# This file is auto-generated when settings are saved.
+# Manual edits are supported — missing keys use default values.
 
+[indicator]
 mute_color = "#00FF00"
-hotkey = "F12"
-sound_enabled = false
-autostart = true
 mute_inputs = "1,2"
+
+[keyboard]
+hotkey = "F12"
+
+[sound]
+sound_enabled = false
 mute_sound_path = ""
 unmute_sound_path = ""
+
+[system]
+autostart = true
 device_serial = ""
-on_mute_command = ""
-on_unmute_command = ""
 notifications_enabled = false
 "##;
         let c: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(c.mute_color, "#00FF00");
-        assert_eq!(c.hotkey, "F12");
-        assert!(!c.sound_enabled);
-        assert!(c.autostart);
-        assert_eq!(c.mute_inputs, "1,2");
+        assert_eq!(c.indicator.mute_color, "#00FF00");
+        assert_eq!(c.keyboard.hotkey, "F12");
+        assert!(!c.sound.sound_enabled);
+        assert!(c.system.autostart);
+        assert_eq!(c.indicator.mute_inputs, "1,2");
     }
 
     // ── save_to / load_from ──
@@ -1076,38 +1524,57 @@ notifications_enabled = false
         let path = dir.path().join("config.toml");
 
         let config = Config {
-            mute_color: "#00FF00".into(),
-            hotkey: "Alt+M".into(),
-            sound_enabled: false,
-            autostart: true,
-            mute_inputs: "1,2".into(),
-            mute_sound_path: "/tmp/mute.wav".into(),
-            unmute_sound_path: "/tmp/unmute.wav".into(),
-            device_serial: "ABC123".into(),
-            on_mute_command: "echo muted".into(),
-            on_unmute_command: "echo unmuted".into(),
-            input_colors: HashMap::from([
-                ("1".into(), "#FF0000".into()),
-                ("2".into(), "#0000FF".into()),
-            ]),
-            notifications_enabled: true,
+            indicator: IndicatorConfig {
+                mute_color: "#00FF00".into(),
+                mute_inputs: "1,2".into(),
+                input_colors: HashMap::from([
+                    ("1".into(), "#FF0000".into()),
+                    ("2".into(), "#0000FF".into()),
+                ]),
+            },
+            keyboard: KeyboardConfig {
+                hotkey: "Alt+M".into(),
+            },
+            sound: SoundConfig {
+                sound_enabled: false,
+                mute_sound_path: "/tmp/mute.wav".into(),
+                unmute_sound_path: "/tmp/unmute.wav".into(),
+            },
+            system: SystemConfig {
+                autostart: true,
+                device_serial: "ABC123".into(),
+                notifications_enabled: true,
+            },
+            hooks: HooksConfig {
+                on_mute_command: "echo muted".into(),
+                on_unmute_command: "echo unmuted".into(),
+            },
         };
         config.save_to(&path).unwrap();
 
         let (loaded, warnings) = Config::load_from(&path);
         assert!(warnings.is_empty());
-        assert_eq!(loaded.mute_color, config.mute_color);
-        assert_eq!(loaded.hotkey, config.hotkey);
-        assert_eq!(loaded.sound_enabled, config.sound_enabled);
-        assert_eq!(loaded.autostart, config.autostart);
-        assert_eq!(loaded.mute_inputs, config.mute_inputs);
-        assert_eq!(loaded.mute_sound_path, config.mute_sound_path);
-        assert_eq!(loaded.unmute_sound_path, config.unmute_sound_path);
-        assert_eq!(loaded.device_serial, config.device_serial);
-        assert_eq!(loaded.on_mute_command, config.on_mute_command);
-        assert_eq!(loaded.on_unmute_command, config.on_unmute_command);
-        assert_eq!(loaded.input_colors, config.input_colors);
-        assert_eq!(loaded.notifications_enabled, config.notifications_enabled);
+        assert_eq!(loaded.indicator.mute_color, config.indicator.mute_color);
+        assert_eq!(loaded.keyboard.hotkey, config.keyboard.hotkey);
+        assert_eq!(loaded.sound.sound_enabled, config.sound.sound_enabled);
+        assert_eq!(loaded.system.autostart, config.system.autostart);
+        assert_eq!(loaded.indicator.mute_inputs, config.indicator.mute_inputs);
+        assert_eq!(loaded.sound.mute_sound_path, config.sound.mute_sound_path);
+        assert_eq!(
+            loaded.sound.unmute_sound_path,
+            config.sound.unmute_sound_path
+        );
+        assert_eq!(loaded.system.device_serial, config.system.device_serial);
+        assert_eq!(loaded.hooks.on_mute_command, config.hooks.on_mute_command);
+        assert_eq!(
+            loaded.hooks.on_unmute_command,
+            config.hooks.on_unmute_command
+        );
+        assert_eq!(loaded.indicator.input_colors, config.indicator.input_colors);
+        assert_eq!(
+            loaded.system.notifications_enabled,
+            config.system.notifications_enabled
+        );
     }
 
     #[test]
@@ -1140,8 +1607,8 @@ notifications_enabled = false
 
         let (config, warnings) = Config::load_from(&path);
         assert!(warnings.is_empty());
-        assert_eq!(config.mute_color, "#FF0000");
-        assert_eq!(config.hotkey, "Ctrl+Shift+M");
+        assert_eq!(config.indicator.mute_color, "#FF0000");
+        assert_eq!(config.keyboard.hotkey, "Ctrl+Shift+M");
     }
 
     #[test]
@@ -1153,6 +1620,6 @@ notifications_enabled = false
         let (config, warnings) = Config::load_from(&path);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("config parse error"));
-        assert_eq!(config.mute_color, "#FF0000");
+        assert_eq!(config.indicator.mute_color, "#FF0000");
     }
 }

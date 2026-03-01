@@ -29,19 +29,24 @@ pub fn register_hotkey(hotkey_str: &str) -> focusmute_lib::error::Result<HotkeyS
 }
 
 /// Unregister the old hotkey and register a new one. Updates state in place.
+///
+/// Parses the new hotkey first so that the old one stays registered if the
+/// new string is invalid.  If registering the new hotkey fails, the old one
+/// is re-registered as a fallback.
 pub fn reregister_hotkey(hk: &mut HotkeyState, new_hotkey_str: &str) {
-    let _ = hk.manager.unregister(hk.current);
-    match new_hotkey_str.parse::<HotKey>() {
-        Ok(new_hk) => {
-            if let Err(e) = hk.manager.register(new_hk) {
-                log::warn!("[config] could not register hotkey '{new_hotkey_str}': {e}");
-            } else {
-                hk.current = new_hk;
-                hk.id = new_hk.id();
-            }
-        }
+    let new_hk = match new_hotkey_str.parse::<HotKey>() {
+        Ok(hk) => hk,
         Err(e) => {
             log::warn!("[config] invalid hotkey '{new_hotkey_str}': {e}");
+            return; // old hotkey stays registered
         }
+    };
+    let _ = hk.manager.unregister(hk.current);
+    if let Err(e) = hk.manager.register(new_hk) {
+        log::warn!("[config] could not register hotkey '{new_hotkey_str}': {e}");
+        let _ = hk.manager.register(hk.current); // restore old
+    } else {
+        hk.current = new_hk;
+        hk.id = new_hk.id();
     }
 }

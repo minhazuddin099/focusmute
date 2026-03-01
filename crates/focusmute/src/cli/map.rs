@@ -69,7 +69,10 @@ pub(super) fn cmd_map(
 
     let led_bytes = led_count * 4;
 
-    // Enable direct LED mode
+    // Enable direct LED mode.
+    // Intentionally using .ok() — the interactive map command is best-effort:
+    // partial LED control is still useful for hardware exploration, and errors
+    // are visible to the user via the LED not lighting up.
     device
         .set_descriptor(ctx.offsets.enable_direct_led, &[2])
         .ok();

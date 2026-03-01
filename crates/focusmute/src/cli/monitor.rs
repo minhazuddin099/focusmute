@@ -24,7 +24,7 @@ struct MonitorCtx {
 fn monitor_setup(config: &mut Config) -> Result<MonitorCtx> {
     let mute_color = led::mute_color_or_default(config);
 
-    let device = open_device_by_serial(&config.device_serial)?;
+    let device = open_device_by_serial(&config.system.device_serial)?;
     println!("[device] {}", device.info().path);
 
     let ctx = DeviceContext::resolve(&device, false)?;
@@ -61,7 +61,7 @@ fn monitor_setup(config: &mut Config) -> Result<MonitorCtx> {
         indicator,
         mute_color,
         reconnect: ReconnectState::with_defaults(),
-        device_serial: config.device_serial.clone(),
+        device_serial: config.system.device_serial.clone(),
         config: config.clone(),
     })
 }
@@ -142,8 +142,18 @@ fn monitor_teardown(mctx: &MonitorCtx) {
     println!("Done.");
 }
 
-pub(super) fn cmd_monitor(config_path: Option<&Path>) -> Result<()> {
+pub(super) fn cmd_monitor(
+    config_path: Option<&Path>,
+    on_mute: Option<&str>,
+    on_unmute: Option<&str>,
+) -> Result<()> {
     let mut config = super::load_config(config_path);
+    if let Some(cmd) = on_mute {
+        config.hooks.on_mute_command = cmd.to_string();
+    }
+    if let Some(cmd) = on_unmute {
+        config.hooks.on_unmute_command = cmd.to_string();
+    }
     let mute_color = led::mute_color_or_default(&config);
 
     // Banner

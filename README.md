@@ -103,37 +103,46 @@ Config file location:
 Created with defaults on first run. Example:
 
 ```toml
+[indicator]
 mute_color = "#FF0000"
-hotkey = "Ctrl+Shift+M"
-sound_enabled = true
-autostart = false
 mute_inputs = "all"
-mute_sound_path = ""
-unmute_sound_path = ""
-device_serial = ""
-on_mute_command = ""
-on_unmute_command = ""
-notifications_enabled = false
-
-[input_colors]
+# Per-input colors (optional):
+# [indicator.input_colors]
 # 1 = "#FF0000"
 # 2 = "#0000FF"
+
+[keyboard]
+hotkey = "Ctrl+Shift+M"
+
+[sound]
+sound_enabled = true
+mute_sound_path = ""
+unmute_sound_path = ""
+
+[system]
+autostart = false
+device_serial = ""
+notifications_enabled = false
+
+[hooks]
+on_mute_command = ""
+on_unmute_command = ""
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `mute_color` | `"#FF0000"` | Hex color or name (e.g. `"red"`, `"#00FF00"`) |
-| `hotkey` | `"Ctrl+Shift+M"` | Global hotkey (tray app; X11 only on Linux) |
-| `sound_enabled` | `true` | Play sound on mute/unmute |
-| `autostart` | `false` | Start on login (tray app) |
-| `mute_inputs` | `"all"` | Which inputs to indicate: `"all"`, `"1"`, `"2"`, `"1,2"` |
-| `mute_sound_path` | `""` | Custom WAV path (empty = built-in) |
-| `unmute_sound_path` | `""` | Custom WAV path (empty = built-in) |
-| `device_serial` | `""` | Preferred device serial (empty = auto-select first) |
-| `on_mute_command` | `""` | Shell command to run on mute (empty = disabled) |
-| `on_unmute_command` | `""` | Shell command to run on unmute (empty = disabled) |
-| `input_colors` | `{}` | Per-input mute colors (TOML table, e.g. `1 = "#FF0000"`) |
-| `notifications_enabled` | `false` | Show desktop notification on mute/unmute |
+| `[indicator].mute_color` | `"#FF0000"` | Hex color or name (e.g. `"red"`, `"#00FF00"`) |
+| `[indicator].mute_inputs` | `"all"` | Which inputs to indicate: `"all"`, `"1"`, `"2"`, `"1,2"` |
+| `[indicator.input_colors]` | `{}` | Per-input mute colors (TOML table, e.g. `1 = "#FF0000"`) |
+| `[keyboard].hotkey` | `"Ctrl+Shift+M"` | Global hotkey (tray app; X11 only on Linux) |
+| `[sound].sound_enabled` | `true` | Play sound on mute/unmute |
+| `[sound].mute_sound_path` | `""` | Custom WAV path (empty = built-in) |
+| `[sound].unmute_sound_path` | `""` | Custom WAV path (empty = built-in) |
+| `[system].autostart` | `false` | Start on login (tray app) |
+| `[system].device_serial` | `""` | Preferred device serial (empty = auto-select first) |
+| `[system].notifications_enabled` | `false` | Show desktop notification on mute/unmute |
+| `[hooks].on_mute_command` | `""` | Shell command to run on mute (empty = disabled) |
+| `[hooks].on_unmute_command` | `""` | Shell command to run on unmute (empty = disabled) |
 
 ## Architecture
 
@@ -223,7 +232,7 @@ focusmute/
 | Module | Responsibility | Key Types |
 |--------|---------------|-----------|
 | `audio` | Mic mute monitoring | `MuteMonitor` trait, `WasapiMonitor`, `PulseAudioMonitor` |
-| `config` | TOML settings + validation | `Config`, `MuteInputs` |
+| `config` | TOML settings + validation | `Config`, `IndicatorConfig`, `KeyboardConfig`, `SoundConfig`, `SystemConfig`, `HooksConfig`, `MuteInputs` |
 | `context` | Device resolution pipeline | `DeviceContext` |
 | `device` | USB communication | `ScarlettDevice` trait, `DeviceInfo`, `FirmwareVersion` |
 | `error` | Unified errors | `FocusmuteError`, `DeviceError`, `AudioError` |

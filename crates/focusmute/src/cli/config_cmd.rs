@@ -58,14 +58,18 @@ pub(super) fn cmd_config(json: bool, custom_path: Option<&Path>) -> Result<()> {
     println!();
 
     println!("Settings:");
-    let color_display = match led::parse_color(&config.mute_color) {
-        Ok(val) => format!("{} -> {}", config.mute_color, led::format_color(val)),
-        Err(_) => format!("{} (invalid)", config.mute_color),
+    let color_display = match led::parse_color(&config.indicator.mute_color) {
+        Ok(val) => format!(
+            "{} -> {}",
+            config.indicator.mute_color,
+            led::format_color(val)
+        ),
+        Err(_) => format!("{} (invalid)", config.indicator.mute_color),
     };
     kv_indent("mute_color:", &color_display, w);
-    kv_indent("hotkey:", &config.hotkey, w);
-    kv_indent("sound_enabled:", config.sound_enabled, w);
-    kv_indent("autostart:", config.autostart, w);
+    kv_indent("hotkey:", &config.keyboard.hotkey, w);
+    kv_indent("sound_enabled:", config.sound.sound_enabled, w);
+    kv_indent("autostart:", config.system.autostart, w);
     let mute_mode = config.parse_mute_inputs();
     kv_indent("mute_inputs:", &mute_mode, w);
     let sound_label = |path: &str| {
@@ -75,10 +79,14 @@ pub(super) fn cmd_config(json: bool, custom_path: Option<&Path>) -> Result<()> {
             path.to_string()
         }
     };
-    kv_indent("mute_sound_path:", sound_label(&config.mute_sound_path), w);
+    kv_indent(
+        "mute_sound_path:",
+        sound_label(&config.sound.mute_sound_path),
+        w,
+    );
     kv_indent(
         "unmute_sound_path:",
-        sound_label(&config.unmute_sound_path),
+        sound_label(&config.sound.unmute_sound_path),
         w,
     );
     println!();

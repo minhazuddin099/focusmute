@@ -34,8 +34,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// previous hook is still running, the new one is skipped with a warning.
 pub fn run_action_hook(action: MonitorAction, config: &Config) {
     match action {
-        MonitorAction::ApplyMute => run_hook(&config.on_mute_command),
-        MonitorAction::ClearMute => run_hook(&config.on_unmute_command),
+        MonitorAction::ApplyMute => run_hook(&config.hooks.on_mute_command),
+        MonitorAction::ClearMute => run_hook(&config.hooks.on_unmute_command),
         MonitorAction::NoChange => {}
     }
 }
@@ -196,7 +196,10 @@ mod tests {
         let mute_marker = dir.path().join("muted.txt");
         let mute_cmd = format!("echo muted > {}", mute_marker.display());
         let config = Config {
-            on_mute_command: mute_cmd,
+            hooks: crate::config::HooksConfig {
+                on_mute_command: mute_cmd,
+                ..Default::default()
+            },
             ..Config::default()
         };
         run_action_hook(MonitorAction::ApplyMute, &config);
@@ -213,7 +216,10 @@ mod tests {
         let unmute_marker = dir.path().join("unmuted.txt");
         let unmute_cmd = format!("echo unmuted > {}", unmute_marker.display());
         let config = Config {
-            on_unmute_command: unmute_cmd,
+            hooks: crate::config::HooksConfig {
+                on_unmute_command: unmute_cmd,
+                ..Default::default()
+            },
             ..Config::default()
         };
         run_action_hook(MonitorAction::ClearMute, &config);

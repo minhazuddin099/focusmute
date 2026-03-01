@@ -42,7 +42,13 @@ impl PlatformAdapter for LinuxAdapter {
     }
 
     fn create_monitor() -> Option<PulseAudioMonitor> {
-        PulseAudioMonitor::new().ok()
+        match PulseAudioMonitor::new() {
+            Ok(m) => Some(m),
+            Err(e) => {
+                log::warn!("could not create audio monitor: {e}");
+                None
+            }
+        }
     }
 
     fn spawn_poll_thread(monitor: Arc<PulseAudioMonitor>, tx: mpsc::Sender<Msg>) -> JoinHandle<()> {

@@ -965,4 +965,121 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("too large"));
     }
+
+    // ── T4: Additional edge case tests ──
+
+    #[test]
+    fn decode_then_parse_empty_input() {
+        // decode_schema on empty input strips nulls to empty → decompresses to
+        // empty string. The error surfaces at parse_schema.
+        let decoded = decode_schema(&[]);
+        if let Ok(json) = decoded {
+            assert!(
+                parse_schema(&json).is_err(),
+                "parse should fail on empty decoded string"
+            );
+        }
+        // Either decode or parse should fail — both paths are acceptable.
+    }
+
+    #[test]
+    fn decode_then_parse_single_null_byte() {
+        // Single null byte is stripped to empty — same behavior as empty input.
+        let decoded = decode_schema(&[0]);
+        if let Ok(json) = decoded {
+            assert!(
+                parse_schema(&json).is_err(),
+                "parse should fail on null-byte decoded string"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_then_parse_truncated_valid_data() {
+        let raw = encode_schema(&test_schema_json());
+        // Take only half the data — base64 or zlib decode should fail,
+        // or if it accidentally succeeds, parse should fail.
+        let truncated = &raw[..raw.len() / 2];
+        let decoded = decode_schema(truncated);
+        match decoded {
+            Err(_) => {} // expected: truncated data fails decode
+            Ok(json) => {
+                assert!(
+                    parse_schema(&json).is_err(),
+                    "if truncated data somehow decoded, parse should still fail"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parse_schema_invalid_json() {
+        let result = parse_schema("not json");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("JSON parse failed"),
+            "should report JSON parse error"
+        );
+    }
+
+    #[test]
+    fn parse_schema_missing_app_space() {
+        let json = serde_json::json!({
+            "device-specification": { "product-name": "Test" },
+            "enums": {
+                "maximum_array_sizes": {
+                    "enumerators": {
+                        "kMAX_NUMBER_LEDS": 40,
+                        "kMAX_NUMBER_INPUTS": 2,
+                        "kMAX_NUMBER_OUTPUTS": 2
+                    }
+                }
+            },
+            "structs": {}
+        })
+        .to_string();
+        let result = parse_schema(&json);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("LEDcolors"),
+            "should report missing LEDcolors (from missing APP_SPACE)"
+        );
+    }
+
+    #[test]
+    fn parse_schema_missing_direct_led_values() {
+        let json = serde_json::json!({
+            "device-specification": { "product-name": "Test" },
+            "enums": {
+                "maximum_array_sizes": {
+                    "enumerators": {
+                        "kMAX_NUMBER_LEDS": 40,
+                        "kMAX_NUMBER_INPUTS": 2,
+                        "kMAX_NUMBER_OUTPUTS": 2
+                    }
+                }
+            },
+            "structs": {
+                "APP_SPACE": {
+                    "members": {
+                        "LEDcolors": {
+                            "offset": 384,
+                            "array-shape": [11],
+                            "notify-device": 9
+                        }
+                    }
+                }
+            }
+        })
+        .to_string();
+        let result = parse_schema(&json);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("directLEDValues"),
+            "should report missing directLEDValues"
+        );
+    }
 }

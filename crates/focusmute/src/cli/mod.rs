@@ -125,7 +125,14 @@ pub enum Command {
     },
 
     /// Run mute indicator (monitors mic mute, changes LED color)
-    Monitor,
+    Monitor {
+        /// Shell command to run when mute is detected (overrides config)
+        #[arg(long)]
+        on_mute: Option<String>,
+        /// Shell command to run when unmute is detected (overrides config)
+        #[arg(long)]
+        on_unmute: Option<String>,
+    },
 
     /// Map directLEDValues — lights one index at a time to identify LEDs
     Map {
@@ -202,11 +209,11 @@ pub fn run(cmd: Command, json: bool, config_path: Option<&Path>) -> Result<()> {
             }
             descriptor::cmd_descriptor(offset, size)
         }
-        Command::Monitor => {
+        Command::Monitor { on_mute, on_unmute } => {
             if json {
                 warn_json_unsupported("monitor");
             }
-            monitor::cmd_monitor(config_path)
+            monitor::cmd_monitor(config_path, on_mute.as_deref(), on_unmute.as_deref())
         }
         Command::Map {
             value,
@@ -465,12 +472,12 @@ mod json_output_tests {
         assert!(parsed["settings"].is_object());
         assert!(parsed["files"].is_object());
 
-        // Settings fields from Config
-        assert_eq!(parsed["settings"]["mute_color"], "#FF0000");
-        assert_eq!(parsed["settings"]["hotkey"], "Ctrl+Shift+M");
-        assert_eq!(parsed["settings"]["sound_enabled"], true);
-        assert_eq!(parsed["settings"]["autostart"], false);
-        assert_eq!(parsed["settings"]["mute_inputs"], "all");
+        // Settings fields from Config (nested sub-structs)
+        assert_eq!(parsed["settings"]["indicator"]["mute_color"], "#FF0000");
+        assert_eq!(parsed["settings"]["keyboard"]["hotkey"], "Ctrl+Shift+M");
+        assert_eq!(parsed["settings"]["sound"]["sound_enabled"], true);
+        assert_eq!(parsed["settings"]["system"]["autostart"], false);
+        assert_eq!(parsed["settings"]["indicator"]["mute_inputs"], "all");
 
         // Files section
         assert!(parsed["files"]["schema_cache"].is_string());

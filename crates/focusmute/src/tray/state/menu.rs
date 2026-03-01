@@ -21,11 +21,20 @@ pub struct TrayMenu {
 }
 
 impl TrayMenu {
+    /// Update the reconnect menu item label based on device connection status.
+    pub fn set_reconnect_label(&self, connected: bool) {
+        self.reconnect_item.set_text(if connected {
+            "Refresh device"
+        } else {
+            "Reconnect device"
+        });
+    }
+
     /// Update menu state based on device connection status.
     pub fn set_device_connected(&self, connected: bool) {
-        self.reconnect_item.set_enabled(!connected);
         self.status_item
             .set_text(if connected { "Live" } else { "Disconnected" });
+        self.set_reconnect_label(connected);
     }
 }
 
@@ -34,10 +43,10 @@ pub fn build_tray_menu(config: &Config, initial_muted: bool) -> (Menu, TrayMenu)
     let menu = Menu::new();
     let initial_status = if initial_muted { "Muted" } else { "Live" };
     let status_item = MenuItem::new(initial_status, false, None);
-    let toggle_label = format!("Toggle Mute\t{}", config.hotkey);
+    let toggle_label = format!("Toggle Mute\t{}", config.keyboard.hotkey);
     let toggle_item = MenuItem::new(&toggle_label, true, None);
     let settings_item = MenuItem::new("Settings...", true, None);
-    let reconnect_item = MenuItem::new("Reconnect Device", false, None);
+    let reconnect_item = MenuItem::new("Reconnect device", true, None);
     let quit_item = MenuItem::new("Quit", true, None);
 
     let _ = menu.append(&status_item);
@@ -122,12 +131,13 @@ pub fn apply_mute_ui(
             tray.set_icon(Some(icon_muted())).ok();
             tray.set_tooltip(Some("FocusMute — Muted")).ok();
             menu.status_item.set_text("Muted");
-            if state.config.sound_enabled
-                && let Some(ref s) = resources.sink
-            {
-                sound::play_sound(&resources.mute_sound, s);
+            if state.config.sound.sound_enabled {
+                match resources.sink {
+                    Some(ref s) => sound::play_sound(&resources.mute_sound, s),
+                    None => log::debug!("sound enabled but audio output unavailable"),
+                }
             }
-            if state.config.notifications_enabled {
+            if state.config.system.notifications_enabled {
                 show_notification("Microphone Muted");
             }
         }
@@ -135,12 +145,13 @@ pub fn apply_mute_ui(
             tray.set_icon(Some(icon_live())).ok();
             tray.set_tooltip(Some("FocusMute — Live")).ok();
             menu.status_item.set_text("Live");
-            if state.config.sound_enabled
-                && let Some(ref s) = resources.sink
-            {
-                sound::play_sound(&resources.unmute_sound, s);
+            if state.config.sound.sound_enabled {
+                match resources.sink {
+                    Some(ref s) => sound::play_sound(&resources.unmute_sound, s),
+                    None => log::debug!("sound enabled but audio output unavailable"),
+                }
             }
-            if state.config.notifications_enabled {
+            if state.config.system.notifications_enabled {
                 show_notification("Microphone Live");
             }
         }

@@ -70,17 +70,17 @@ fn print_status(
     config: &Config,
     json: bool,
 ) -> Result<()> {
-    let color_display = match led::parse_color(&config.mute_color) {
+    let color_display = match led::parse_color(&config.indicator.mute_color) {
         Ok(val) => led::format_color(val),
-        Err(_) => format!("{} (invalid)", config.mute_color),
+        Err(_) => format!("{} (invalid)", config.indicator.mute_color),
     };
     let mute_mode = config.parse_mute_inputs();
     let config_summary = ConfigSummaryJson {
         mute_color: color_display.clone(),
         mute_inputs: mute_mode.to_string(),
-        hotkey: config.hotkey.clone(),
-        sound_enabled: config.sound_enabled,
-        autostart: config.autostart,
+        hotkey: config.keyboard.hotkey.clone(),
+        sound_enabled: config.sound.sound_enabled,
+        autostart: config.system.autostart,
     };
 
     if json {
@@ -154,9 +154,21 @@ fn print_status(
     println!("Config:");
     kv_indent("Mute color:", &color_display, w);
     kv_indent("Mute inputs:", &mute_mode, w);
-    kv_indent("Hotkey:", &config.hotkey, w);
-    kv_indent("Sound:", if config.sound_enabled { "on" } else { "off" }, w);
-    kv_indent("Autostart:", if config.autostart { "on" } else { "off" }, w);
+    kv_indent("Hotkey:", &config.keyboard.hotkey, w);
+    kv_indent(
+        "Sound:",
+        if config.sound.sound_enabled {
+            "on"
+        } else {
+            "off"
+        },
+        w,
+    );
+    kv_indent(
+        "Autostart:",
+        if config.system.autostart { "on" } else { "off" },
+        w,
+    );
 
     Ok(())
 }

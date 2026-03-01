@@ -391,4 +391,24 @@ mod tests {
         let result = refresh_after_reconnect(&dev, &strategy, 0xFF00_0000, true);
         assert!(result.is_err(), "should return Err when apply fails");
     }
+
+    // ── T3: set_single_led error propagation ──
+
+    #[test]
+    fn set_single_led_propagates_write_error() {
+        let dev = MockDevice::new();
+        dev.fail_set_descriptor.set(true);
+
+        let result = set_single_led(&dev, 0, 0xFF00_0000);
+        assert!(result.is_err(), "should propagate set_descriptor error");
+    }
+
+    #[test]
+    fn set_single_led_propagates_notify_error() {
+        let dev = MockDevice::new();
+        dev.fail_data_notify.set(true);
+
+        let result = set_single_led(&dev, 0, 0xFF00_0000);
+        assert!(result.is_err(), "should propagate data_notify error");
+    }
 }

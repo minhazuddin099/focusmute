@@ -40,7 +40,7 @@ impl SoundPreviewPlayer {
     pub fn play(&self, path: &str, fallback: &'static [u8]) {
         // Stop any currently playing preview
         self.sink.stop();
-        let sound = crate::sound::load_sound_data(path, fallback);
+        let (sound, _warning) = crate::sound::load_sound_data(path, fallback);
         crate::sound::play_sound(&sound, &self.sink);
     }
 }
@@ -186,7 +186,10 @@ mod tests {
     #[test]
     fn combo_items_specific_input_selected() {
         let c = Config {
-            mute_inputs: "1".into(),
+            indicator: focusmute_lib::config::IndicatorConfig {
+                mute_inputs: "1".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let (items, sel) = inputs_combo_items(&c, 2);
@@ -197,7 +200,10 @@ mod tests {
     #[test]
     fn combo_items_second_input_selected() {
         let c = Config {
-            mute_inputs: "2".into(),
+            indicator: focusmute_lib::config::IndicatorConfig {
+                mute_inputs: "2".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let (_, sel) = inputs_combo_items(&c, 2);
@@ -207,7 +213,10 @@ mod tests {
     #[test]
     fn combo_items_all_combined_selected() {
         let c = Config {
-            mute_inputs: "1,2".into(),
+            indicator: focusmute_lib::config::IndicatorConfig {
+                mute_inputs: "1,2".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let (items, sel) = inputs_combo_items(&c, 2);
@@ -217,7 +226,10 @@ mod tests {
     #[test]
     fn combo_items_all_string_selects_first() {
         let c = Config {
-            mute_inputs: "all".into(),
+            indicator: focusmute_lib::config::IndicatorConfig {
+                mute_inputs: "all".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let (_, sel) = inputs_combo_items(&c, 2);
@@ -260,7 +272,10 @@ mod tests {
     fn roundtrip_all() {
         let mute_str = combo_to_mute_inputs(0, 2);
         let c = Config {
-            mute_inputs: mute_str,
+            indicator: focusmute_lib::config::IndicatorConfig {
+                mute_inputs: mute_str,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let (_, sel) = inputs_combo_items(&c, 2);
@@ -271,7 +286,10 @@ mod tests {
     fn roundtrip_specific_input() {
         let mute_str = combo_to_mute_inputs(1, 2);
         let c = Config {
-            mute_inputs: mute_str.clone(),
+            indicator: focusmute_lib::config::IndicatorConfig {
+                mute_inputs: mute_str.clone(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let parsed = c.parse_mute_inputs();
@@ -284,7 +302,10 @@ mod tests {
     fn roundtrip_all_combined() {
         let mute_str = combo_to_mute_inputs(3, 2);
         let c = Config {
-            mute_inputs: mute_str,
+            indicator: focusmute_lib::config::IndicatorConfig {
+                mute_inputs: mute_str,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let (items, sel) = inputs_combo_items(&c, 2);

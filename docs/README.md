@@ -175,7 +175,7 @@ See [09-led-control-api-discovery.md](09-led-control-api-discovery.md) for the L
    - **Hook commands** — run shell commands on mute/unmute (`on_mute_command`, `on_unmute_command`)
    - **System tray icon** on Windows (Win32) and Linux (GTK) with context menu (status, toggle, settings, reconnect, quit)
    - **Graceful no-device startup** — starts without a Scarlett device, shows "Disconnected" in tray, reconnects automatically when device appears
-   - **Settings dialog** — mute color, hotkey, sound toggle, custom sound paths with browse/clear/preview, mute inputs, hook commands (Advanced section), autostart, device info (cross-platform egui/eframe)
+   - **Settings dialog** — mute color, hotkey, sound toggle, custom sound paths with browse/clear/preview, mute inputs, hook commands (Advanced > Hooks section), autostart, device info (cross-platform egui/eframe)
    - **CLI tool** — `focusmute-cli` with `status`, `config`, `devices`, `monitor`, `probe`, `map`, `predict`, `descriptor`, `mute`, `unmute` subcommands; `--json` and `--config <path>` flags for scripting
    - **Unmute on exit** — inputs are automatically unmuted when focusmute quits, so the user isn't left silently muted with LEDs restored to normal
 

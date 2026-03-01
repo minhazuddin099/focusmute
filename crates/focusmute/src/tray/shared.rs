@@ -58,7 +58,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
     for w in &parse_warnings {
         log::warn!("{w}");
     }
-    let (mut state, mut device) = match open_device_by_serial(&config.device_serial) {
+    let (mut state, mut device) = match open_device_by_serial(&config.system.device_serial) {
         Ok(dev) => {
             let st = TrayState::init_with_config(config, &dev)?;
             (st, Some(dev))
@@ -80,21 +80,26 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
     }
 
     // Init audio/hotkey resources
-    let mut resources = TrayResources::init(&state.config)?;
+    let (mut resources, sound_warnings) = TrayResources::init(&state.config)?;
 
     // Build tray menu and icon
     let (menu, tray_menu) = state::build_tray_menu(&state.config, initial_muted);
     let tray = state::build_tray_icon(initial_muted, menu)?;
 
-    // If no device at startup, show disconnected status immediately
+    // If no device at startup, show disconnected status immediately.
+    // When connected, only update the reconnect label — the status text
+    // already reflects the initial mute state from build_tray_menu.
     if device.is_none() {
         tray_menu.set_device_connected(false);
+    } else {
+        tray_menu.set_reconnect_label(true);
     }
 
-    // Show startup warnings (parse errors + validation errors)
+    // Show startup warnings (parse errors + validation errors + sound errors)
     {
         const MAX_SOUND_BYTES: u64 = 10_000_000;
         let mut all_warnings = parse_warnings;
+        all_warnings.extend(sound_warnings);
         let input_count = state.ctx.as_ref().and_then(|c| c.input_count());
         if let Err(errs) = state.config.validate(input_count, MAX_SOUND_BYTES) {
             for e in &errs {
@@ -136,6 +141,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
         if device.is_none()
             && let Some(new_dev) = state.try_reconnect()
         {
+            log::info!("[device] reconnected");
             device = Some(new_dev);
             tray_menu.set_device_connected(true);
         }
@@ -171,7 +177,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
                     log::warn!("failed to toggle mute: {e}");
                 }
             };
-            let quit = state::handle_menu_event(
+            let (quit, force_reconnect) = state::handle_menu_event(
                 &event,
                 &tray_menu,
                 &mut state,
@@ -182,6 +188,10 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
             if quit {
                 RUNNING.store(false, Ordering::SeqCst);
                 break;
+            }
+            if force_reconnect {
+                device = None;
+                tray_menu.set_device_connected(false);
             }
         }
 

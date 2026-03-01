@@ -699,4 +699,58 @@ mod tests {
         let woken = m.wait_for_change(std::time::Duration::from_millis(10));
         assert!(!woken, "should timeout without signal");
     }
+
+    // ── T5: Additional audio monitoring tests ──
+
+    #[test]
+    fn stub_monitor_refresh_is_noop() {
+        let m = stub::StubMonitor::new(false);
+        m.refresh();
+        assert!(!m.is_muted(), "refresh should not change state");
+        m.set(true);
+        m.refresh();
+        assert!(m.is_muted(), "refresh should not reset state");
+    }
+
+    #[test]
+    fn stub_monitor_concurrent_is_muted_reads() {
+        use std::sync::Arc;
+        let m = Arc::new(stub::StubMonitor::new(false));
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let m = Arc::clone(&m);
+                std::thread::spawn(move || {
+                    for _ in 0..100 {
+                        let _ = m.is_muted();
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        // No panics = success
+    }
+
+    #[test]
+    fn debouncer_with_stub_monitor_integration() {
+        let monitor = stub::StubMonitor::new(false);
+        let mut debouncer = MuteDebouncer::new(2, false);
+
+        // Initial state: not muted
+        assert!(!monitor.is_muted());
+        assert!(!debouncer.is_muted());
+
+        // Simulate mute via monitor
+        monitor.set(true);
+        assert_eq!(debouncer.update(monitor.is_muted()), None);
+        assert_eq!(debouncer.update(monitor.is_muted()), Some(true));
+        assert!(debouncer.is_muted());
+
+        // Simulate unmute via monitor
+        monitor.set(false);
+        assert_eq!(debouncer.update(monitor.is_muted()), None);
+        assert_eq!(debouncer.update(monitor.is_muted()), Some(false));
+        assert!(!debouncer.is_muted());
+    }
 }

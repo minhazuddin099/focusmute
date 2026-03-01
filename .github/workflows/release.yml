@@ -39,7 +39,7 @@ jobs:
           command: check advisories
 
       - name: Run tests
-        run: cargo test --lib
+        run: cargo test
 
   release-windows:
     name: Build & Release (Windows)

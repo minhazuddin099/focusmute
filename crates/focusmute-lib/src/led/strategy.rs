@@ -217,7 +217,7 @@ fn build_mute_colors(
 
 /// Parse the mute color from config, falling back to red on invalid input.
 pub fn mute_color_or_default(config: &Config) -> u32 {
-    parse_color(&config.mute_color).unwrap_or(0xFF00_0000)
+    parse_color(&config.indicator.mute_color).unwrap_or(0xFF00_0000)
 }
 
 /// Validate mute-inputs config, parse it, and resolve the mute strategy.
@@ -234,7 +234,7 @@ pub fn resolve_strategy_from_config(
         && let Err(e) = config.validate_mute_inputs(ic)
     {
         warnings.push(format!("{e} — falling back to all inputs"));
-        config.mute_inputs = "all".into();
+        config.indicator.mute_inputs = "all".into();
     }
     let mute_mode = config.parse_mute_inputs();
     let mute_color = mute_color_or_default(config);
@@ -243,7 +243,7 @@ pub fn resolve_strategy_from_config(
         profile,
         predicted,
         mute_color,
-        &config.input_colors,
+        &config.indicator.input_colors,
     )?;
     if let Some(w) = strategy_warning {
         warnings.push(w);
@@ -431,14 +431,14 @@ mod tests {
     #[test]
     fn mute_color_or_default_valid_hex() {
         let mut config = Config::load();
-        config.mute_color = "#00FF00".into();
+        config.indicator.mute_color = "#00FF00".into();
         assert_eq!(mute_color_or_default(&config), 0x00FF_0000);
     }
 
     #[test]
     fn mute_color_or_default_invalid_returns_red() {
         let mut config = Config::load();
-        config.mute_color = "garbage".into();
+        config.indicator.mute_color = "garbage".into();
         assert_eq!(mute_color_or_default(&config), 0xFF00_0000);
     }
 
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn resolve_strategy_all_inputs_with_profile() {
         let mut config = Config::load();
-        config.mute_inputs = "all".into();
+        config.indicator.mute_inputs = "all".into();
         let profile = models::detect_model("Scarlett 2i2 4th Gen").unwrap();
         let (mode, strategy, warnings) =
             resolve_strategy_from_config(&mut config, Some(2), Some(profile), None).unwrap();
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn resolve_strategy_all_inputs_no_profile_no_predicted_returns_error() {
         let mut config = Config::load();
-        config.mute_inputs = "all".into();
+        config.indicator.mute_inputs = "all".into();
         let result = resolve_strategy_from_config(&mut config, Some(2), None, None);
         assert!(result.is_err());
     }
@@ -467,7 +467,7 @@ mod tests {
     #[test]
     fn resolve_strategy_validation_failure_falls_back() {
         let mut config = Config::load();
-        config.mute_inputs = "5".into(); // out of range for 2 inputs
+        config.indicator.mute_inputs = "5".into(); // out of range for 2 inputs
         let profile = models::detect_model("Scarlett 2i2 4th Gen").unwrap();
         let (mode, strategy, warnings) =
             resolve_strategy_from_config(&mut config, Some(2), Some(profile), None).unwrap();
@@ -475,13 +475,13 @@ mod tests {
         assert_eq!(strategy.input_indices, &[0, 1]);
         assert!(!warnings.is_empty());
         assert!(warnings[0].contains("falling back"));
-        assert_eq!(config.mute_inputs, "all");
+        assert_eq!(config.indicator.mute_inputs, "all");
     }
 
     #[test]
     fn resolve_strategy_with_predicted_layout() {
         let mut config = Config::load();
-        config.mute_inputs = "all".into();
+        config.indicator.mute_inputs = "all".into();
         let predicted = make_predicted_layout(2);
         let (mode, strategy, warnings) =
             resolve_strategy_from_config(&mut config, Some(2), None, Some(&predicted)).unwrap();

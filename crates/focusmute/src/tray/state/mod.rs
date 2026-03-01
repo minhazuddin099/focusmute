@@ -43,18 +43,24 @@ pub struct TrayResources {
 }
 
 impl TrayResources {
-    pub fn init(config: &Config) -> focusmute_lib::error::Result<Self> {
+    pub fn init(config: &Config) -> focusmute_lib::error::Result<(Self, Vec<String>)> {
         let (_audio_stream, sink) = sound::init_audio_output();
-        let mute_sound = sound::load_sound_data(&config.mute_sound_path, sound::SOUND_MUTED);
-        let unmute_sound = sound::load_sound_data(&config.unmute_sound_path, sound::SOUND_UNMUTED);
-        let hotkey = register_hotkey(&config.hotkey)?;
-        Ok(Self {
-            mute_sound,
-            unmute_sound,
-            hotkey,
-            sink,
-            _audio_stream,
-        })
+        let (mute_sound, mute_warn) =
+            sound::load_sound_data(&config.sound.mute_sound_path, sound::SOUND_MUTED);
+        let (unmute_sound, unmute_warn) =
+            sound::load_sound_data(&config.sound.unmute_sound_path, sound::SOUND_UNMUTED);
+        let hotkey = register_hotkey(&config.keyboard.hotkey)?;
+        let warnings: Vec<String> = [mute_warn, unmute_warn].into_iter().flatten().collect();
+        Ok((
+            Self {
+                mute_sound,
+                unmute_sound,
+                hotkey,
+                sink,
+                _audio_stream,
+            },
+            warnings,
+        ))
     }
 }
 
@@ -85,6 +91,22 @@ pub fn set_autostart(enabled: bool) {
     }
 }
 
+// ── Shared helpers ──
+
+/// Resolve the mute strategy from the current config and optional device context.
+fn resolve_strategy(
+    config: &mut Config,
+    ctx: Option<&DeviceContext>,
+) -> Result<(led::MuteStrategy, Vec<String>), String> {
+    let (input_count, profile, predicted) = match ctx {
+        Some(c) => (c.input_count(), c.profile, c.predicted.as_ref()),
+        None => (None, None, None),
+    };
+    let (_mode, strategy, warnings) =
+        led::resolve_strategy_from_config(config, input_count, profile, predicted)?;
+    Ok((strategy, warnings))
+}
+
 // ── Shared tray state ──
 
 /// Platform-independent tray application state.
@@ -109,13 +131,8 @@ impl TrayState {
 
         let ctx = DeviceContext::resolve(device, false)?;
 
-        let (_mute_mode, strategy, warnings) = led::resolve_strategy_from_config(
-            &mut config,
-            ctx.input_count(),
-            ctx.profile,
-            ctx.predicted.as_ref(),
-        )
-        .map_err(focusmute_lib::FocusmuteError::Config)?;
+        let (strategy, warnings) = resolve_strategy(&mut config, Some(&ctx))
+            .map_err(focusmute_lib::FocusmuteError::Config)?;
         for w in &warnings {
             log::warn!("[config] {w}");
         }
@@ -162,13 +179,8 @@ impl TrayState {
     ) -> focusmute_lib::error::Result<Vec<String>> {
         let ctx = DeviceContext::resolve(device, false)?;
 
-        let (_mute_mode, strategy, warnings) = led::resolve_strategy_from_config(
-            &mut self.config,
-            ctx.input_count(),
-            ctx.profile,
-            ctx.predicted.as_ref(),
-        )
-        .map_err(focusmute_lib::FocusmuteError::Config)?;
+        let (strategy, warnings) = resolve_strategy(&mut self.config, Some(&ctx))
+            .map_err(focusmute_lib::FocusmuteError::Config)?;
         for w in &warnings {
             log::warn!("[config] {w}");
         }
@@ -203,6 +215,7 @@ impl TrayState {
     ///
     /// Returns the new device on success, `None` if not ready or failed.
     pub fn try_reconnect(&mut self) -> Option<focusmute_lib::device::PlatformDevice> {
+        log::debug!("[device] attempting reconnection...");
         if self.ctx.is_some() {
             // Normal reconnect: device was previously connected, strategy is valid.
             focusmute_lib::reconnect::try_reconnect_and_refresh(
@@ -210,13 +223,13 @@ impl TrayState {
                 self.indicator.strategy(),
                 self.indicator.mute_color(),
                 self.indicator.is_muted(),
-                &self.config.device_serial,
+                &self.config.system.device_serial,
             )
         } else {
             // First connect: no DeviceContext yet — open device and resolve context.
             let dev = focusmute_lib::reconnect::try_reopen(
                 &mut self.reconnect,
-                &self.config.device_serial,
+                &self.config.system.device_serial,
             )?;
             match self.reinit_device_context(&dev) {
                 Ok(warnings) => {
@@ -263,33 +276,24 @@ impl TrayState {
         let mut warnings = Vec::new();
 
         // Update mute color
-        if let Ok(color) = led::parse_color(&new_config.mute_color) {
+        if let Ok(color) = led::parse_color(&new_config.indicator.mute_color) {
             self.indicator.set_mute_color(color);
         }
 
         // Update autostart
-        if new_config.autostart != self.config.autostart {
-            set_autostart(new_config.autostart);
+        if new_config.system.autostart != self.config.system.autostart {
+            set_autostart(new_config.system.autostart);
         }
 
         // Re-resolve strategy if mute_inputs, input_colors, or mute_color changed.
         // mute_color affects strategy.mute_colors — without this, changing the
         // global color leaves the per-input strategy colors stale.
-        if new_config.mute_inputs != self.config.mute_inputs
-            || new_config.input_colors != self.config.input_colors
-            || new_config.mute_color != self.config.mute_color
+        if new_config.indicator.mute_inputs != self.config.indicator.mute_inputs
+            || new_config.indicator.input_colors != self.config.indicator.input_colors
+            || new_config.indicator.mute_color != self.config.indicator.mute_color
         {
-            let (input_count, profile, predicted) = match self.ctx.as_ref() {
-                Some(ctx) => (ctx.input_count(), ctx.profile, ctx.predicted.as_ref()),
-                None => (None, None, None),
-            };
-            match led::resolve_strategy_from_config(
-                &mut new_config,
-                input_count,
-                profile,
-                predicted,
-            ) {
-                Ok((_mode, new_strategy, sw)) => {
+            match resolve_strategy(&mut new_config, self.ctx.as_ref()) {
+                Ok((new_strategy, sw)) => {
                     warnings.extend(sw);
                     // Clear old indicator before switching strategy
                     if self.indicator.is_muted()
@@ -329,10 +333,12 @@ impl TrayState {
         new_config: Config,
         device: Option<&impl ScarlettDevice>,
     ) -> (Vec<String>, bool, bool, bool, String) {
-        let mute_sound_changed = new_config.mute_sound_path != self.config.mute_sound_path;
-        let unmute_sound_changed = new_config.unmute_sound_path != self.config.unmute_sound_path;
-        let hotkey_changed = new_config.hotkey != self.config.hotkey;
-        let new_hotkey_str = new_config.hotkey.clone();
+        let mute_sound_changed =
+            new_config.sound.mute_sound_path != self.config.sound.mute_sound_path;
+        let unmute_sound_changed =
+            new_config.sound.unmute_sound_path != self.config.sound.unmute_sound_path;
+        let hotkey_changed = new_config.keyboard.hotkey != self.config.keyboard.hotkey;
+        let new_hotkey_str = new_config.keyboard.hotkey.clone();
 
         let warnings = self.apply_config(new_config, device);
 
@@ -355,7 +361,7 @@ impl TrayState {
 
 /// Handle a menu event from the tray context menu.
 ///
-/// Returns `true` if the event was a quit request.
+/// Returns `(should_quit, force_reconnect)`.
 pub fn handle_menu_event(
     event: &MenuEvent,
     menu: &TrayMenu,
@@ -363,9 +369,9 @@ pub fn handle_menu_event(
     device: &mut Option<impl ScarlettDevice>,
     resources: &mut TrayResources,
     toggle_mute_fn: &dyn Fn(bool),
-) -> bool {
+) -> (bool, bool) {
     if event.id() == menu.quit_item.id() {
-        return true;
+        return (true, false);
     } else if event.id() == menu.toggle_item.id() {
         toggle_mute_fn(state.indicator.is_muted());
     } else if event.id() == menu.settings_item.id() {
@@ -382,11 +388,15 @@ pub fn handle_menu_event(
 
             if mute_changed {
                 resources.mute_sound =
-                    sound::load_sound_data(&state.config.mute_sound_path, sound::SOUND_MUTED);
+                    sound::load_sound_data(&state.config.sound.mute_sound_path, sound::SOUND_MUTED)
+                        .0;
             }
             if unmute_changed {
-                resources.unmute_sound =
-                    sound::load_sound_data(&state.config.unmute_sound_path, sound::SOUND_UNMUTED);
+                resources.unmute_sound = sound::load_sound_data(
+                    &state.config.sound.unmute_sound_path,
+                    sound::SOUND_UNMUTED,
+                )
+                .0;
             }
 
             if hotkey_changed {
@@ -397,9 +407,9 @@ pub fn handle_menu_event(
         }
     } else if event.id() == menu.reconnect_item.id() {
         state.reset_backoff();
-        // Next loop iteration will attempt reconnect immediately
+        return (false, true);
     }
-    false
+    (false, false)
 }
 
 #[cfg(test)]
@@ -423,8 +433,8 @@ mod tests {
         let dev = make_mock_device();
         let state = TrayState::init_with_config(Config::default(), &dev).unwrap();
         assert!(!state.indicator.is_muted());
-        assert!(state.config.sound_enabled); // Default config has sound_enabled=true
-        assert_eq!(state.config.mute_color, "#FF0000");
+        assert!(state.config.sound.sound_enabled); // Default config has sound_enabled=true
+        assert_eq!(state.config.indicator.mute_color, "#FF0000");
     }
 
     #[test]
@@ -466,12 +476,12 @@ mod tests {
     fn apply_config_updates_sound() {
         let dev = make_mock_device();
         let mut state = TrayState::init_with_config(Config::default(), &dev).unwrap();
-        assert!(state.config.sound_enabled);
+        assert!(state.config.sound.sound_enabled);
 
         let mut new_config = state.config.clone();
-        new_config.sound_enabled = false;
+        new_config.sound.sound_enabled = false;
         state.apply_config(new_config, Some(&dev));
-        assert!(!state.config.sound_enabled);
+        assert!(!state.config.sound.sound_enabled);
     }
 
     #[test]
@@ -481,7 +491,7 @@ mod tests {
 
         let original_color = state.indicator.mute_color();
         let mut new_config = state.config.clone();
-        new_config.mute_color = "#00FF00".into();
+        new_config.indicator.mute_color = "#00FF00".into();
         state.apply_config(new_config, Some(&dev));
         assert_ne!(state.indicator.mute_color(), original_color);
     }
@@ -492,7 +502,7 @@ mod tests {
         let mut state = TrayState::init_with_config(Config::default(), &dev).unwrap();
 
         let mut new_config = state.config.clone();
-        new_config.mute_inputs = "1".into();
+        new_config.indicator.mute_inputs = "1".into();
         state.apply_config(new_config, Some(&dev));
         // Strategy should target only input 1
         assert_eq!(state.indicator.strategy().input_indices, &[0]);
@@ -548,8 +558,8 @@ mod tests {
         let mut state = TrayState::init_with_config(Config::default(), &dev).unwrap();
 
         let mut new_config = state.config.clone();
-        new_config.hotkey = "F12".into();
-        new_config.mute_sound_path = "/some/new/path.wav".into();
+        new_config.keyboard.hotkey = "F12".into();
+        new_config.sound.mute_sound_path = "/some/new/path.wav".into();
 
         let (_, mute_changed, unmute_changed, hotkey_changed, new_hk) =
             state.handle_settings_result(new_config, Some(&dev));
@@ -619,7 +629,7 @@ mod tests {
         let original_color = state.indicator.mute_color();
 
         let mut new_config = state.config.clone();
-        new_config.mute_color = "#00FF00".into();
+        new_config.indicator.mute_color = "#00FF00".into();
         let (warnings, _, _, _, _) = state.handle_settings_result(new_config, Some(&dev));
         assert!(warnings.is_empty());
         assert_ne!(
@@ -635,14 +645,14 @@ mod tests {
         let mut state = TrayState::init_with_config(Config::default(), &dev).unwrap();
 
         // Default is sound_enabled=true
-        assert!(state.config.sound_enabled);
+        assert!(state.config.sound.sound_enabled);
 
         // Simulate the sound toggle action from handle_menu_event
-        state.config.sound_enabled = !state.config.sound_enabled;
+        state.config.sound.sound_enabled = !state.config.sound.sound_enabled;
         // (save() would write to disk — we just verify the in-memory state)
 
         assert!(
-            !state.config.sound_enabled,
+            !state.config.sound.sound_enabled,
             "config should reflect toggled state"
         );
     }
@@ -651,22 +661,28 @@ mod tests {
     fn init_sound_enabled_from_config() {
         let dev = make_mock_device();
         let config = Config {
-            sound_enabled: true,
+            sound: focusmute_lib::config::SoundConfig {
+                sound_enabled: true,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let state = TrayState::init_with_config(config, &dev).unwrap();
         assert!(
-            state.config.sound_enabled,
+            state.config.sound.sound_enabled,
             "should init sound_enabled from config"
         );
 
         let config2 = Config {
-            sound_enabled: false,
+            sound: focusmute_lib::config::SoundConfig {
+                sound_enabled: false,
+                ..Default::default()
+            },
             ..Config::default()
         };
         let state2 = TrayState::init_with_config(config2, &dev).unwrap();
         assert!(
-            !state2.config.sound_enabled,
+            !state2.config.sound.sound_enabled,
             "should init sound_enabled=false from config"
         );
     }
@@ -703,7 +719,7 @@ mod tests {
 
         // Switch strategy to target only input 1
         let mut new_config = state.config.clone();
-        new_config.mute_inputs = "1".into();
+        new_config.indicator.mute_inputs = "1".into();
         state.apply_config(new_config, Some(&dev));
 
         // Strategy should target only input 1
@@ -724,7 +740,10 @@ mod tests {
         let dev = make_mock_device();
         // Start with per-input mode so strategy has mute_colors populated
         let config = Config {
-            mute_inputs: "1,2".into(),
+            indicator: focusmute_lib::config::IndicatorConfig {
+                mute_inputs: "1,2".into(),
+                ..Default::default()
+            },
             ..Config::default()
         };
         let mut state = TrayState::init_with_config(config, &dev).unwrap();
@@ -733,7 +752,7 @@ mod tests {
 
         // Change only the global mute color
         let mut new_config = state.config.clone();
-        new_config.mute_color = "#00FF00".into();
+        new_config.indicator.mute_color = "#00FF00".into();
         state.apply_config(new_config, Some(&dev));
 
         // The strategy's mute_colors should reflect the new global color
@@ -826,7 +845,7 @@ mod tests {
 
         // Change color — should succeed even without a device
         let mut new_config = state.config.clone();
-        new_config.mute_color = "#00FF00".into();
+        new_config.indicator.mute_color = "#00FF00".into();
         let warnings = state.apply_config(new_config, Option::<&MockDevice>::None);
 
         // Strategy re-resolution fails (no profile/predicted) but the warning
@@ -841,12 +860,12 @@ mod tests {
 
         // Change only sound_enabled — should NOT trigger strategy re-resolution
         let mut new_config = state.config.clone();
-        new_config.sound_enabled = false;
+        new_config.sound.sound_enabled = false;
         let warnings = state.apply_config(new_config, Option::<&MockDevice>::None);
 
         // No warnings because strategy re-resolution wasn't attempted
         assert!(warnings.is_empty());
-        assert!(!state.config.sound_enabled);
+        assert!(!state.config.sound.sound_enabled);
     }
 
     #[test]

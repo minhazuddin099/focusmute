@@ -5,13 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-01
+
+### Added
+
+- `monitor --on-mute <cmd>` and `--on-unmute <cmd>` CLI flags to override hook commands without editing the config file
+- Backward-compatible loading of legacy flat config files (pre-v0.5.0)
+- Sound loading warnings (missing file, invalid WAV) now surfaced in tray startup notification balloon
+- `color_to_rgb` and `rgb_to_hex` public API in `led::color` (DRY consolidation from settings dialog)
+- MSRV declared as Rust 1.85 in both crates
+- ~20 new tests: audio concurrency, schema edge cases, LED error propagation, settings validation, CLI integration (JSON output, hook flags)
+
+### Changed
+
+- Config file restructured into nested TOML sections (`[indicator]`, `[keyboard]`, `[sound]`, `[system]`, `[hooks]`) — existing flat configs are automatically migrated on next save
+- Rich config file header with platform-specific paths and usage notes
+- Settings dialog section renamed from "Hotkey" to "Keyboard"
+- Settings dialog hooks section now has a labeled header with info tooltip; labels simplified to "On mute" / "On unmute"
+- "Reconnect device" tray menu item is now always enabled — shows "Reconnect device" when disconnected and "Refresh device" when connected
+- Audio monitor creation failures now logged as warnings on both Windows and Linux (previously silent)
+- Release CI now runs all tests (`cargo test`) instead of just lib tests (`cargo test --lib`)
+
+### Fixed
+
+- Hotkey re-registration no longer loses the old hotkey if the new hotkey string is invalid — new hotkey is parsed first, and if registration fails the old hotkey is re-registered as a fallback
+- Settings dialog validation errors (red text) now clear when any form field changes (text, color picker, combobox, checkboxes, browse/clear buttons), and the window resizes to keep Cancel/Save buttons visible
+- Tray status text no longer overwritten from "Muted" to "Live" when starting with a device already connected in muted state
+
 ## [0.4.0] - 2026-03-01
 
 ### Added
 
 - `--config <path>` global CLI flag to load settings from a custom TOML file instead of the default location
 - Hotkey syntax validation in settings dialog — invalid hotkey strings (e.g. "Ctrl+Blah") now show an error before saving
-- "Advanced" collapsible section in settings dialog exposing hook command fields (`on_mute_command`, `on_unmute_command`)
+- "Advanced" collapsible section in settings dialog with "Hooks" subsection (`on_mute_command`, `on_unmute_command`) and info tooltip
 - Sound preview "Play" buttons in settings dialog — preview mute/unmute sounds without closing the dialog
 - Sound path "Clear" buttons in settings dialog — clear a custom sound path to revert to the built-in sound
 - "(built-in)" hint text on empty sound path fields in settings dialog

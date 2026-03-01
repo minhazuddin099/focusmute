@@ -44,7 +44,13 @@ impl PlatformAdapter for WindowsAdapter {
     }
 
     fn create_monitor() -> Option<WasapiMonitor> {
-        WasapiMonitor::new().ok()
+        match WasapiMonitor::new() {
+            Ok(m) => Some(m),
+            Err(e) => {
+                log::warn!("could not create audio monitor: {e}");
+                None
+            }
+        }
     }
 
     fn spawn_poll_thread(monitor: Arc<WasapiMonitor>, tx: mpsc::Sender<Msg>) -> JoinHandle<()> {

@@ -36,6 +36,22 @@ pub fn parse_color(s: &str) -> crate::error::Result<u32> {
     Ok(val << 8) // shift to 0xRRGGBB00
 }
 
+/// Convert device color `0xRRGGBB00` to normalized RGB `[0.0..1.0]`.
+pub fn color_to_rgb(val: u32) -> [f32; 3] {
+    let r = ((val >> 24) & 0xFF) as f32 / 255.0;
+    let g = ((val >> 16) & 0xFF) as f32 / 255.0;
+    let b = ((val >> 8) & 0xFF) as f32 / 255.0;
+    [r, g, b]
+}
+
+/// Convert normalized RGB `[0.0..1.0]` to hex string `#RRGGBB`.
+pub fn rgb_to_hex(rgb: [f32; 3]) -> String {
+    let r = (rgb[0] * 255.0).round() as u8;
+    let g = (rgb[1] * 255.0).round() as u8;
+    let b = (rgb[2] * 255.0).round() as u8;
+    format!("#{r:02X}{g:02X}{b:02X}")
+}
+
 /// Format a device color value as `#RRGGBB`.
 pub fn format_color(val: u32) -> String {
     let r = (val >> 24) & 0xFF;
@@ -180,5 +196,63 @@ mod tests {
         let val = parse_color("#AB12CD").unwrap();
         assert_eq!(format_color(val), "#AB12CD");
         assert_eq!(parse_color("#AB12CD").unwrap(), val);
+    }
+
+    // ── color_to_rgb ──
+
+    #[test]
+    fn color_to_rgb_red() {
+        let rgb = color_to_rgb(0xFF00_0000);
+        assert!((rgb[0] - 1.0).abs() < 0.01);
+        assert!(rgb[1].abs() < 0.01);
+        assert!(rgb[2].abs() < 0.01);
+    }
+
+    #[test]
+    fn color_to_rgb_green() {
+        let rgb = color_to_rgb(0x00FF_0000);
+        assert!(rgb[0].abs() < 0.01);
+        assert!((rgb[1] - 1.0).abs() < 0.01);
+        assert!(rgb[2].abs() < 0.01);
+    }
+
+    #[test]
+    fn color_to_rgb_blue() {
+        let rgb = color_to_rgb(0x0000_FF00);
+        assert!(rgb[0].abs() < 0.01);
+        assert!(rgb[1].abs() < 0.01);
+        assert!((rgb[2] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn color_to_rgb_ignores_low_byte() {
+        let rgb = color_to_rgb(0xFF0000FF);
+        assert!((rgb[0] - 1.0).abs() < 0.01);
+    }
+
+    // ── rgb_to_hex ──
+
+    #[test]
+    fn rgb_to_hex_red() {
+        assert_eq!(rgb_to_hex([1.0, 0.0, 0.0]), "#FF0000");
+    }
+
+    #[test]
+    fn rgb_to_hex_mixed() {
+        assert_eq!(rgb_to_hex([0.0, 0.5, 1.0]), "#0080FF");
+    }
+
+    // ── color_to_rgb + rgb_to_hex roundtrip ──
+
+    #[test]
+    fn color_to_rgb_to_hex_roundtrip() {
+        for hex in &[
+            "#FF0000", "#00FF00", "#0000FF", "#ABCDEF", "#000000", "#FFFFFF",
+        ] {
+            let val = parse_color(hex).unwrap();
+            let rgb = color_to_rgb(val);
+            let back = rgb_to_hex(rgb);
+            assert_eq!(&back, hex, "roundtrip failed for {hex}");
+        }
     }
 }

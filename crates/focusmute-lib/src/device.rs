@@ -1213,6 +1213,8 @@ pub mod mock {
         pub get_descriptor_max_len: Cell<Option<usize>>,
         /// If true, `set_descriptor` returns an error.
         pub fail_set_descriptor: Cell<bool>,
+        /// If true, `data_notify` returns an error.
+        pub fail_data_notify: Cell<bool>,
     }
 
     impl Default for MockDevice {
@@ -1243,6 +1245,7 @@ pub mod mock {
                 transact_payloads: RefCell::new(Vec::new()),
                 get_descriptor_max_len: Cell::new(None),
                 fail_set_descriptor: Cell::new(false),
+                fail_data_notify: Cell::new(false),
             }
         }
 
@@ -1305,6 +1308,11 @@ pub mod mock {
         }
 
         fn data_notify(&self, event_id: u32) -> Result<()> {
+            if self.fail_data_notify.get() {
+                return Err(DeviceError::TransactFailed(
+                    "mock: data_notify failure injected".into(),
+                ));
+            }
             self.notifies.borrow_mut().push(event_id);
             Ok(())
         }
