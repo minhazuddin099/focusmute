@@ -37,11 +37,11 @@ impl SoundPreviewPlayer {
         })
     }
 
-    pub fn play(&self, path: &str, fallback: &'static [u8]) {
+    pub fn play(&self, path: &str, fallback: &'static [u8], volume: f32) {
         // Stop any currently playing preview
         self.sink.stop();
         let (sound, _warning) = crate::sound::load_sound_data(path, fallback);
-        crate::sound::play_sound(&sound, &self.sink);
+        crate::sound::play_sound(&sound, &self.sink, volume);
     }
 }
 
@@ -310,5 +310,27 @@ mod tests {
         };
         let (items, sel) = inputs_combo_items(&c, 2);
         assert_eq!(sel, items.len() - 1);
+    }
+
+    #[test]
+    fn combo_to_mute_out_of_range_index_returns_index_string() {
+        // Index beyond valid combo items — falls through to the format!("{index}") arm
+        assert_eq!(combo_to_mute_inputs(5, 2), "5");
+        assert_eq!(combo_to_mute_inputs(10, 1), "10");
+    }
+
+    #[test]
+    fn combo_items_mismatched_mute_inputs_clamps_selected() {
+        // Config says "1,2" but device only has 1 input — selected index should
+        // be clamped to the last valid combo item.
+        let c = Config {
+            indicator: focusmute_lib::config::IndicatorConfig {
+                mute_inputs: "1,2".into(),
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        let (items, sel) = inputs_combo_items(&c, 1);
+        assert!(sel < items.len(), "selected index should be within bounds");
     }
 }

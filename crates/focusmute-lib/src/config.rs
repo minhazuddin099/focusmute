@@ -80,6 +80,14 @@ pub struct SoundConfig {
     /// Path to custom unmute sound WAV file. Empty = use built-in.
     #[serde(default)]
     pub unmute_sound_path: String,
+
+    /// Volume for mute sound (0.0–1.0). Default: 1.0.
+    #[serde(default = "default_sound_volume")]
+    pub mute_sound_volume: f32,
+
+    /// Volume for unmute sound (0.0–1.0). Default: 1.0.
+    #[serde(default = "default_sound_volume")]
+    pub unmute_sound_volume: f32,
 }
 
 impl Default for SoundConfig {
@@ -88,6 +96,8 @@ impl Default for SoundConfig {
             sound_enabled: true,
             mute_sound_path: String::new(),
             unmute_sound_path: String::new(),
+            mute_sound_volume: default_sound_volume(),
+            unmute_sound_volume: default_sound_volume(),
         }
     }
 }
@@ -135,6 +145,9 @@ fn default_mute_inputs() -> String {
 fn default_true() -> bool {
     true
 }
+fn default_sound_volume() -> f32 {
+    1.0
+}
 
 // ── Top-level config ──
 
@@ -176,6 +189,10 @@ struct LegacyConfig {
     mute_sound_path: String,
     #[serde(default)]
     unmute_sound_path: String,
+    #[serde(default = "default_sound_volume")]
+    mute_sound_volume: f32,
+    #[serde(default = "default_sound_volume")]
+    unmute_sound_volume: f32,
     #[serde(default)]
     device_serial: String,
     #[serde(default)]
@@ -203,6 +220,8 @@ impl From<LegacyConfig> for Config {
                 sound_enabled: legacy.sound_enabled,
                 mute_sound_path: legacy.mute_sound_path,
                 unmute_sound_path: legacy.unmute_sound_path,
+                mute_sound_volume: legacy.mute_sound_volume,
+                unmute_sound_volume: legacy.unmute_sound_volume,
             },
             system: SystemConfig {
                 autostart: legacy.autostart,
@@ -247,6 +266,8 @@ impl std::fmt::Display for MuteInputs {
 pub enum ValidationError {
     /// The `mute_color` field could not be parsed as a valid color.
     InvalidColor(String),
+    /// A sound volume field is outside the valid 0.0–1.0 range.
+    InvalidSoundVolume { field: &'static str, value: f32 },
     /// The `hotkey` field is empty or whitespace-only.
     EmptyHotkey,
     /// A custom sound path is invalid (`field` is `"mute_sound_path"` or `"unmute_sound_path"`).
@@ -261,6 +282,9 @@ impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ValidationError::InvalidColor(e) => write!(f, "Invalid mute color: {e}"),
+            ValidationError::InvalidSoundVolume { field, value } => {
+                write!(f, "{field} must be between 0.0 and 1.0, got {value}")
+            }
             ValidationError::EmptyHotkey => write!(f, "Hotkey cannot be empty"),
             ValidationError::InvalidSoundPath { field, reason } => {
                 write!(f, "Invalid {field}: {reason}")
@@ -488,6 +512,20 @@ impl Config {
             });
         }
 
+        // Validate sound volumes
+        if !(0.0..=1.0).contains(&self.sound.mute_sound_volume) {
+            errors.push(ValidationError::InvalidSoundVolume {
+                field: "mute_sound_volume",
+                value: self.sound.mute_sound_volume,
+            });
+        }
+        if !(0.0..=1.0).contains(&self.sound.unmute_sound_volume) {
+            errors.push(ValidationError::InvalidSoundVolume {
+                field: "unmute_sound_volume",
+                value: self.sound.unmute_sound_volume,
+            });
+        }
+
         // Validate mute inputs if input count is known
         if let Some(count) = input_count
             && let Err(e) = self.validate_mute_inputs(count)
@@ -585,39 +623,13 @@ mod tests {
         assert_eq!(c.indicator.mute_color, "#FF0000");
         assert_eq!(c.keyboard.hotkey, "Ctrl+Shift+M");
         assert!(c.sound.sound_enabled);
+        assert_eq!(c.sound.mute_sound_volume, 1.0);
+        assert_eq!(c.sound.unmute_sound_volume, 1.0);
         assert!(!c.system.autostart);
         assert_eq!(c.indicator.mute_inputs, "all");
     }
 
-    #[test]
-    fn serialize_roundtrip() {
-        let c = Config {
-            indicator: IndicatorConfig {
-                mute_color: "#00FF00".into(),
-                mute_inputs: "1,2".into(),
-                ..Default::default()
-            },
-            keyboard: KeyboardConfig {
-                hotkey: "F12".into(),
-            },
-            sound: SoundConfig {
-                sound_enabled: false,
-                ..Default::default()
-            },
-            system: SystemConfig {
-                autostart: true,
-                ..Default::default()
-            },
-            ..Config::default()
-        };
-        let toml_str = toml::to_string_pretty(&c).unwrap();
-        let c2: Config = toml::from_str(&toml_str).unwrap();
-        assert_eq!(c2.indicator.mute_color, "#00FF00");
-        assert_eq!(c2.keyboard.hotkey, "F12");
-        assert!(!c2.sound.sound_enabled);
-        assert!(c2.system.autostart);
-        assert_eq!(c2.indicator.mute_inputs, "1,2");
-    }
+    // NOTE: serialize_roundtrip removed — fully covered by config_round_trip_all_fields.
 
     #[test]
     fn partial_toml_fills_defaults() {
@@ -627,6 +639,8 @@ mod tests {
         // Missing fields get defaults
         assert_eq!(c.keyboard.hotkey, "Ctrl+Shift+M");
         assert!(c.sound.sound_enabled);
+        assert_eq!(c.sound.mute_sound_volume, 1.0);
+        assert_eq!(c.sound.unmute_sound_volume, 1.0);
         assert!(!c.system.autostart);
         assert_eq!(c.indicator.mute_inputs, "all");
     }
@@ -637,6 +651,8 @@ mod tests {
         assert_eq!(c.indicator.mute_color, "#FF0000");
         assert_eq!(c.keyboard.hotkey, "Ctrl+Shift+M");
         assert!(c.sound.sound_enabled);
+        assert_eq!(c.sound.mute_sound_volume, 1.0);
+        assert_eq!(c.sound.unmute_sound_volume, 1.0);
         assert!(!c.system.autostart);
         assert_eq!(c.indicator.mute_inputs, "all");
     }
@@ -711,6 +727,8 @@ notifications_enabled = true
         assert_eq!(c.indicator.mute_color, "#00FF00");
         assert_eq!(c.keyboard.hotkey, "F12");
         assert!(!c.sound.sound_enabled);
+        assert_eq!(c.sound.mute_sound_volume, 1.0);
+        assert_eq!(c.sound.unmute_sound_volume, 1.0);
         assert!(c.system.autostart);
         assert_eq!(c.indicator.mute_inputs, "1,2");
         assert_eq!(c.sound.mute_sound_path, "/tmp/mute.wav");
@@ -856,6 +874,8 @@ on_unmute_command = "echo u"
                 sound_enabled: false,
                 mute_sound_path: "/tmp/mute.wav".into(),
                 unmute_sound_path: "/tmp/unmute.wav".into(),
+                mute_sound_volume: 0.75,
+                unmute_sound_volume: 0.5,
             },
             system: SystemConfig {
                 autostart: true,
@@ -874,6 +894,14 @@ on_unmute_command = "echo u"
         assert_eq!(loaded.indicator.mute_color, config.indicator.mute_color);
         assert_eq!(loaded.keyboard.hotkey, config.keyboard.hotkey);
         assert_eq!(loaded.sound.sound_enabled, config.sound.sound_enabled);
+        assert_eq!(
+            loaded.sound.mute_sound_volume,
+            config.sound.mute_sound_volume
+        );
+        assert_eq!(
+            loaded.sound.unmute_sound_volume,
+            config.sound.unmute_sound_volume
+        );
         assert_eq!(loaded.system.autostart, config.system.autostart);
         assert_eq!(loaded.indicator.mute_inputs, config.indicator.mute_inputs);
         assert_eq!(loaded.sound.mute_sound_path, config.sound.mute_sound_path);
@@ -1049,6 +1077,29 @@ on_unmute_command = "echo u"
         assert_eq!(c.parse_mute_inputs(), MuteInputs::All);
     }
 
+    #[test]
+    fn parse_mute_inputs_negative_ignored() {
+        // Negative numbers fail usize parse, so they're silently ignored.
+        let c = Config {
+            indicator: IndicatorConfig {
+                mute_inputs: "-1".into(),
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        assert_eq!(c.parse_mute_inputs(), MuteInputs::All);
+
+        // Mixed: valid "1" survives, "-2" is ignored.
+        let c2 = Config {
+            indicator: IndicatorConfig {
+                mute_inputs: "1,-2".into(),
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        assert_eq!(c2.parse_mute_inputs(), MuteInputs::Specific(vec![0]));
+    }
+
     // ── validate_mute_inputs ──
 
     #[test]
@@ -1118,21 +1169,7 @@ on_unmute_command = "echo u"
         assert!(c.sound.unmute_sound_path.is_empty());
     }
 
-    #[test]
-    fn serialize_roundtrip_with_sound_paths() {
-        let c = Config {
-            sound: SoundConfig {
-                mute_sound_path: "C:\\sounds\\mute.wav".into(),
-                unmute_sound_path: "C:\\sounds\\unmute.wav".into(),
-                ..Default::default()
-            },
-            ..Config::default()
-        };
-        let toml_str = toml::to_string_pretty(&c).unwrap();
-        let c2: Config = toml::from_str(&toml_str).unwrap();
-        assert_eq!(c2.sound.mute_sound_path, "C:\\sounds\\mute.wav");
-        assert_eq!(c2.sound.unmute_sound_path, "C:\\sounds\\unmute.wav");
-    }
+    // NOTE: serialize_roundtrip_with_sound_paths removed — covered by config_round_trip_all_fields.
 
     #[test]
     fn validate_sound_path_empty_is_ok() {
@@ -1174,6 +1211,99 @@ on_unmute_command = "echo u"
         std::fs::write(&path, b"dummy wav content").unwrap();
         assert!(Config::validate_sound_path(path.to_str().unwrap(), 10_000_000).is_ok());
         let _ = std::fs::remove_file(&path);
+    }
+
+    // ── sound_volume ──
+
+    #[test]
+    fn validate_mute_sound_volume_out_of_range() {
+        for bad in [1.5, -0.1, 2.0, -1.0] {
+            let c = Config {
+                sound: SoundConfig {
+                    mute_sound_volume: bad,
+                    ..Default::default()
+                },
+                ..Config::default()
+            };
+            let errs = c.validate(None, 10_000_000).unwrap_err();
+            assert!(
+                errs.iter().any(|e| matches!(
+                    e,
+                    ValidationError::InvalidSoundVolume {
+                        field: "mute_sound_volume",
+                        ..
+                    }
+                )),
+                "expected InvalidSoundVolume for mute {bad}, got: {errs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_unmute_sound_volume_out_of_range() {
+        for bad in [1.5, -0.1] {
+            let c = Config {
+                sound: SoundConfig {
+                    unmute_sound_volume: bad,
+                    ..Default::default()
+                },
+                ..Config::default()
+            };
+            let errs = c.validate(None, 10_000_000).unwrap_err();
+            assert!(
+                errs.iter().any(|e| matches!(
+                    e,
+                    ValidationError::InvalidSoundVolume {
+                        field: "unmute_sound_volume",
+                        ..
+                    }
+                )),
+                "expected InvalidSoundVolume for unmute {bad}, got: {errs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_sound_volume_boundary_values_ok() {
+        for ok in [0.0, 0.5, 1.0] {
+            let c = Config {
+                sound: SoundConfig {
+                    mute_sound_volume: ok,
+                    unmute_sound_volume: ok,
+                    ..Default::default()
+                },
+                ..Config::default()
+            };
+            assert!(
+                c.validate(None, 10_000_000).is_ok(),
+                "sound_volume {ok} should be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_sound_volume_deserializes_to_default() {
+        let toml_str =
+            "[sound]\nsound_enabled = true\nmute_sound_path = \"\"\nunmute_sound_path = \"\"";
+        let c: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(c.sound.mute_sound_volume, 1.0);
+        assert_eq!(c.sound.unmute_sound_volume, 1.0);
+    }
+
+    #[test]
+    fn legacy_config_without_sound_volume_gets_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "mute_color = \"#FF0000\"\nhotkey = \"Ctrl+Shift+M\"\nsound_enabled = true\nautostart = false\n",
+        )
+        .unwrap();
+
+        let (c, warnings) = Config::load_from(&path);
+        assert!(warnings.is_empty());
+        assert_eq!(c.sound.mute_sound_volume, 1.0);
+        assert_eq!(c.sound.unmute_sound_volume, 1.0);
     }
 
     // ── Config::validate() ──
@@ -1298,13 +1428,15 @@ on_unmute_command = "echo u"
             sound: SoundConfig {
                 mute_sound_path: "/bad/path.wav".into(),
                 unmute_sound_path: "/bad/path2.wav".into(),
+                mute_sound_volume: 2.0,
+                unmute_sound_volume: -1.0,
                 ..Default::default()
             },
             ..Config::default()
         };
         let errs = c.validate(Some(2), 10_000_000).unwrap_err();
-        assert_eq!(errs.len(), 5);
-        // Verify ordering: color, hotkey, mute_sound, unmute_sound, mute_inputs
+        assert_eq!(errs.len(), 7);
+        // Verify ordering: color, hotkey, mute_sound, unmute_sound, mute_vol, unmute_vol, mute_inputs
         assert!(matches!(errs[0], ValidationError::InvalidColor(_)));
         assert!(matches!(errs[1], ValidationError::EmptyHotkey));
         assert!(matches!(
@@ -1321,7 +1453,21 @@ on_unmute_command = "echo u"
                 ..
             }
         ));
-        assert!(matches!(errs[4], ValidationError::InvalidMuteInputs(_)));
+        assert!(matches!(
+            errs[4],
+            ValidationError::InvalidSoundVolume {
+                field: "mute_sound_volume",
+                ..
+            }
+        ));
+        assert!(matches!(
+            errs[5],
+            ValidationError::InvalidSoundVolume {
+                field: "unmute_sound_volume",
+                ..
+            }
+        ));
+        assert!(matches!(errs[6], ValidationError::InvalidMuteInputs(_)));
     }
 
     #[test]
@@ -1345,6 +1491,15 @@ on_unmute_command = "echo u"
             reason: "file not found".into(),
         };
         assert_eq!(e.to_string(), "Invalid mute_sound_path: file not found");
+
+        let e = ValidationError::InvalidSoundVolume {
+            field: "mute_sound_volume",
+            value: 1.5,
+        };
+        assert_eq!(
+            e.to_string(),
+            "mute_sound_volume must be between 0.0 and 1.0, got 1.5"
+        );
     }
 
     #[test]
@@ -1365,6 +1520,8 @@ on_unmute_command = "echo u"
                 sound_enabled: false,
                 mute_sound_path: "/tmp/mute.wav".into(),
                 unmute_sound_path: "/tmp/unmute.wav".into(),
+                mute_sound_volume: 0.3,
+                unmute_sound_volume: 0.8,
             },
             system: SystemConfig {
                 autostart: true,
@@ -1381,6 +1538,14 @@ on_unmute_command = "echo u"
         assert_eq!(loaded.indicator.mute_color, config.indicator.mute_color);
         assert_eq!(loaded.keyboard.hotkey, config.keyboard.hotkey);
         assert_eq!(loaded.sound.sound_enabled, config.sound.sound_enabled);
+        assert_eq!(
+            loaded.sound.mute_sound_volume,
+            config.sound.mute_sound_volume
+        );
+        assert_eq!(
+            loaded.sound.unmute_sound_volume,
+            config.sound.unmute_sound_volume
+        );
         assert_eq!(loaded.system.autostart, config.system.autostart);
         assert_eq!(loaded.indicator.mute_inputs, config.indicator.mute_inputs);
         assert_eq!(loaded.sound.mute_sound_path, config.sound.mute_sound_path);
@@ -1518,64 +1683,7 @@ notifications_enabled = false
 
     // ── save_to / load_from ──
 
-    #[test]
-    fn save_to_load_from_round_trip() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-
-        let config = Config {
-            indicator: IndicatorConfig {
-                mute_color: "#00FF00".into(),
-                mute_inputs: "1,2".into(),
-                input_colors: HashMap::from([
-                    ("1".into(), "#FF0000".into()),
-                    ("2".into(), "#0000FF".into()),
-                ]),
-            },
-            keyboard: KeyboardConfig {
-                hotkey: "Alt+M".into(),
-            },
-            sound: SoundConfig {
-                sound_enabled: false,
-                mute_sound_path: "/tmp/mute.wav".into(),
-                unmute_sound_path: "/tmp/unmute.wav".into(),
-            },
-            system: SystemConfig {
-                autostart: true,
-                device_serial: "ABC123".into(),
-                notifications_enabled: true,
-            },
-            hooks: HooksConfig {
-                on_mute_command: "echo muted".into(),
-                on_unmute_command: "echo unmuted".into(),
-            },
-        };
-        config.save_to(&path).unwrap();
-
-        let (loaded, warnings) = Config::load_from(&path);
-        assert!(warnings.is_empty());
-        assert_eq!(loaded.indicator.mute_color, config.indicator.mute_color);
-        assert_eq!(loaded.keyboard.hotkey, config.keyboard.hotkey);
-        assert_eq!(loaded.sound.sound_enabled, config.sound.sound_enabled);
-        assert_eq!(loaded.system.autostart, config.system.autostart);
-        assert_eq!(loaded.indicator.mute_inputs, config.indicator.mute_inputs);
-        assert_eq!(loaded.sound.mute_sound_path, config.sound.mute_sound_path);
-        assert_eq!(
-            loaded.sound.unmute_sound_path,
-            config.sound.unmute_sound_path
-        );
-        assert_eq!(loaded.system.device_serial, config.system.device_serial);
-        assert_eq!(loaded.hooks.on_mute_command, config.hooks.on_mute_command);
-        assert_eq!(
-            loaded.hooks.on_unmute_command,
-            config.hooks.on_unmute_command
-        );
-        assert_eq!(loaded.indicator.input_colors, config.indicator.input_colors);
-        assert_eq!(
-            loaded.system.notifications_enabled,
-            config.system.notifications_enabled
-        );
-    }
+    // NOTE: save_to/load_from roundtrip is covered by save_load_roundtrip_nested above.
 
     #[test]
     fn save_to_includes_header_comment() {

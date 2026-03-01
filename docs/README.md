@@ -175,8 +175,8 @@ See [09-led-control-api-discovery.md](09-led-control-api-discovery.md) for the L
    - **Hook commands** — run shell commands on mute/unmute (`on_mute_command`, `on_unmute_command`)
    - **System tray icon** on Windows (Win32) and Linux (GTK) with context menu (status, toggle, settings, reconnect, quit)
    - **Graceful no-device startup** — starts without a Scarlett device, shows "Disconnected" in tray, reconnects automatically when device appears
-   - **Settings dialog** — mute color, hotkey, sound toggle, custom sound paths with browse/clear/preview, mute inputs, hook commands (Advanced > Hooks section), autostart, device info (cross-platform egui/eframe)
-   - **CLI tool** — `focusmute-cli` with `status`, `config`, `devices`, `monitor`, `probe`, `map`, `predict`, `descriptor`, `mute`, `unmute` subcommands; `--json` and `--config <path>` flags for scripting
+   - **Settings dialog** — mute color, hotkey, sound toggle, custom sound paths with browse/clear/preview, per-sound volume sliders, mute inputs, hook commands (Advanced > Hooks section), autostart, notifications toggle, device info (cross-platform egui/eframe)
+   - **CLI tool** — `focusmute-cli` with `status`, `config`, `devices`, `monitor`, `probe`, `map`, `predict`, `descriptor`, `mute`, `unmute` subcommands; `--json`, `--config <path>`, and `config --edit` flags for scripting
    - **Unmute on exit** — inputs are automatically unmuted when focusmute quits, so the user isn't left silently muted with LEDs restored to normal
 
 7. **Button LED color calibration** — NOT NEEDED. FocusMute's default mode (`mute_inputs=all`) uses the metering gradient approach, which uses the native firmware rendering path. Per-input mute uses the single-LED update mechanism (DATA_NOTIFY(8)) which targets only the number indicator LEDs and avoids the `directLEDValues` bulk rendering path entirely.

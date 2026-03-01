@@ -133,7 +133,11 @@ pub fn apply_mute_ui(
             menu.status_item.set_text("Muted");
             if state.config.sound.sound_enabled {
                 match resources.sink {
-                    Some(ref s) => sound::play_sound(&resources.mute_sound, s),
+                    Some(ref s) => sound::play_sound(
+                        &resources.mute_sound,
+                        s,
+                        state.config.sound.mute_sound_volume,
+                    ),
                     None => log::debug!("sound enabled but audio output unavailable"),
                 }
             }
@@ -147,7 +151,11 @@ pub fn apply_mute_ui(
             menu.status_item.set_text("Live");
             if state.config.sound.sound_enabled {
                 match resources.sink {
-                    Some(ref s) => sound::play_sound(&resources.unmute_sound, s),
+                    Some(ref s) => sound::play_sound(
+                        &resources.unmute_sound,
+                        s,
+                        state.config.sound.unmute_sound_volume,
+                    ),
                     None => log::debug!("sound enabled but audio output unavailable"),
                 }
             }

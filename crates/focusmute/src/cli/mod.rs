@@ -173,7 +173,11 @@ pub enum Command {
     },
 
     /// Show current configuration and file paths
-    Config,
+    Config {
+        /// Open config file in $EDITOR
+        #[arg(long)]
+        edit: bool,
+    },
 
     /// Show device and microphone status
     Status,
@@ -236,7 +240,7 @@ pub fn run(cmd: Command, json: bool, config_path: Option<&Path>) -> Result<()> {
             probe::cmd_probe(dump_schema)
         }
         Command::Predict { schema_file } => predict::cmd_predict(schema_file, json),
-        Command::Config => config_cmd::cmd_config(json, config_path),
+        Command::Config { edit } => config_cmd::cmd_config(json, config_path, edit),
         Command::Status => status::cmd_status(json, config_path),
         Command::Mute => {
             if json {
@@ -627,13 +631,77 @@ mod command_tests {
     fn cmd_config_succeeds() {
         // cmd_config reads the config (or defaults) and prints it.
         // Should never fail even without a config file.
-        let result = config_cmd::cmd_config(false, None);
+        let result = config_cmd::cmd_config(false, None, false);
         assert!(result.is_ok());
     }
 
     #[test]
     fn cmd_config_json_succeeds() {
-        let result = config_cmd::cmd_config(true, None);
+        let result = config_cmd::cmd_config(true, None, false);
         assert!(result.is_ok());
+    }
+
+    /// Editor tests consolidated into one #[test] to avoid env var races.
+    /// VISUAL/EDITOR are process-global; parallel tests would clobber each other.
+    /// Skipped on Windows target: relies on Unix `true`/`false` commands.
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn cmd_config_edit_scenarios() {
+        // Helper to set VISUAL and clear EDITOR for each scenario.
+        // SAFETY: single-threaded within this test; other tests don't touch VISUAL/EDITOR.
+        let set_editor = |cmd: &str| unsafe {
+            std::env::set_var("VISUAL", cmd);
+            std::env::remove_var("EDITOR");
+        };
+
+        // Scenario 1: successful edit creates default config
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            assert!(!path.exists());
+
+            set_editor("true"); // no-op command, exits 0
+            let result = config_cmd::cmd_config(false, Some(&path), true);
+            assert!(
+                result.is_ok(),
+                "scenario 1 failed: {:?}",
+                result.unwrap_err()
+            );
+            assert!(path.exists(), "config file should have been created");
+
+            let (config, warnings) = Config::load_from(&path);
+            assert!(warnings.is_empty());
+            assert_eq!(config.indicator.mute_color, "#FF0000");
+        }
+
+        // Scenario 2: nonexistent editor returns launch error
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+
+            set_editor("/nonexistent/editor");
+            let result = config_cmd::cmd_config(false, Some(&path), true);
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("failed to launch editor"),
+                "expected launch error, got: {msg}"
+            );
+        }
+
+        // Scenario 3: editor that exits non-zero returns exit status error
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+
+            set_editor("false"); // always exits with status 1
+            let result = config_cmd::cmd_config(false, Some(&path), true);
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("editor exited with"),
+                "expected exit status error, got: {msg}"
+            );
+        }
     }
 }

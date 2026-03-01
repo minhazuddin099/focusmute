@@ -71,7 +71,8 @@ pub(crate) fn load_sound_data(
 }
 
 /// Append a pre-decoded sound to an existing sink (non-blocking).
-pub(crate) fn play_sound(sound: &DecodedSound, sink: &Sink) {
+pub(crate) fn play_sound(sound: &DecodedSound, sink: &Sink, volume: f32) {
+    sink.set_volume(volume);
     let source = SamplesBuffer::new(sound.channels, sound.sample_rate, sound.samples.clone());
     sink.append(source);
 }

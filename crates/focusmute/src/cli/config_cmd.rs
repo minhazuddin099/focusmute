@@ -3,8 +3,46 @@
 use std::path::Path;
 
 use super::{Config, ConfigFilesJson, ConfigOutput, Result, kv, kv_indent, kv_width, led, schema};
+use focusmute_lib::FocusmuteError;
 
-pub(super) fn cmd_config(json: bool, custom_path: Option<&Path>) -> Result<()> {
+pub(super) fn cmd_config(json: bool, custom_path: Option<&Path>, edit: bool) -> Result<()> {
+    if edit {
+        if json {
+            log::warn!("--json is ignored when --edit is used");
+        }
+        let path = custom_path.map(|p| p.to_path_buf()).or_else(Config::path);
+        let Some(path) = path else {
+            return Err(FocusmuteError::Config(
+                "no config directory available".into(),
+            ));
+        };
+        if !path.exists() {
+            Config::default().save_to(&path)?;
+        }
+        let editor = std::env::var("VISUAL")
+            .or_else(|_| std::env::var("EDITOR"))
+            .unwrap_or_else(|_| {
+                if cfg!(windows) {
+                    "notepad".into()
+                } else {
+                    "vi".into()
+                }
+            });
+        let status = std::process::Command::new(&editor)
+            .arg(&path)
+            .status()
+            .map_err(|e| {
+                FocusmuteError::Config(format!("failed to launch editor '{}': {}", editor, e))
+            })?;
+        if !status.success() {
+            return Err(FocusmuteError::Config(format!(
+                "editor exited with {}",
+                status
+            )));
+        }
+        return Ok(());
+    }
+
     let config = super::load_config(custom_path);
     let config_path = custom_path.map(|p| p.to_path_buf()).or_else(Config::path);
     let config_exists = config_path.as_ref().map(|p| p.exists()).unwrap_or(false);
@@ -33,7 +71,10 @@ pub(super) fn cmd_config(json: bool, custom_path: Option<&Path>) -> Result<()> {
             "mute_color:",
             "hotkey:",
             "sound_enabled:",
+            "mute_sound_volume:",
+            "unmute_sound_volume:",
             "autostart:",
+            "notifications_enabled:",
             "mute_inputs:",
             "mute_sound_path:",
             "unmute_sound_path:",
@@ -69,7 +110,14 @@ pub(super) fn cmd_config(json: bool, custom_path: Option<&Path>) -> Result<()> {
     kv_indent("mute_color:", &color_display, w);
     kv_indent("hotkey:", &config.keyboard.hotkey, w);
     kv_indent("sound_enabled:", config.sound.sound_enabled, w);
+    kv_indent("mute_sound_volume:", config.sound.mute_sound_volume, w);
+    kv_indent("unmute_sound_volume:", config.sound.unmute_sound_volume, w);
     kv_indent("autostart:", config.system.autostart, w);
+    kv_indent(
+        "notifications_enabled:",
+        config.system.notifications_enabled,
+        w,
+    );
     let mute_mode = config.parse_mute_inputs();
     kv_indent("mute_inputs:", &mute_mode, w);
     let sound_label = |path: &str| {

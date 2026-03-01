@@ -29,7 +29,10 @@ pub struct SettingsApp {
     input_count: usize,
 
     sound_enabled: bool,
+    mute_sound_volume: f32,
+    unmute_sound_volume: f32,
     autostart: bool,
+    notifications_enabled: bool,
 
     mute_sound_path: String,
     unmute_sound_path: String,
@@ -96,7 +99,10 @@ impl SettingsApp {
             input_count,
 
             sound_enabled: config.sound.sound_enabled,
+            mute_sound_volume: config.sound.mute_sound_volume,
+            unmute_sound_volume: config.sound.unmute_sound_volume,
             autostart: config.system.autostart,
+            notifications_enabled: config.system.notifications_enabled,
 
             mute_sound_path: config.sound.mute_sound_path.clone(),
             unmute_sound_path: config.sound.unmute_sound_path.clone(),
@@ -129,7 +135,10 @@ impl SettingsApp {
             color_rgb: self.color_rgb,
             hotkey: &self.hotkey,
             sound_enabled: self.sound_enabled,
+            mute_sound_volume: self.mute_sound_volume,
+            unmute_sound_volume: self.unmute_sound_volume,
             autostart: self.autostart,
+            notifications_enabled: self.notifications_enabled,
             mute_inputs_index: self.mute_inputs_index,
             input_count: self.input_count,
             mute_sound_path: &self.mute_sound_path,
@@ -154,33 +163,41 @@ impl SettingsApp {
     }
 
     /// Snapshot all form fields for change detection (used to clear stale errors).
-    fn form_snapshot(
-        &self,
-    ) -> (
-        String,
-        [f32; 3],
-        String,
-        usize,
-        bool,
-        bool,
-        String,
-        String,
-        String,
-        String,
-    ) {
-        (
-            self.color_text.clone(),
-            self.color_rgb,
-            self.hotkey.clone(),
-            self.mute_inputs_index,
-            self.sound_enabled,
-            self.autostart,
-            self.mute_sound_path.clone(),
-            self.unmute_sound_path.clone(),
-            self.on_mute_command.clone(),
-            self.on_unmute_command.clone(),
-        )
+    fn form_snapshot(&self) -> FormSnapshot {
+        FormSnapshot {
+            color_text: self.color_text.clone(),
+            color_rgb: self.color_rgb,
+            hotkey: self.hotkey.clone(),
+            mute_inputs_index: self.mute_inputs_index,
+            sound_enabled: self.sound_enabled,
+            mute_sound_volume: self.mute_sound_volume,
+            unmute_sound_volume: self.unmute_sound_volume,
+            autostart: self.autostart,
+            notifications_enabled: self.notifications_enabled,
+            mute_sound_path: self.mute_sound_path.clone(),
+            unmute_sound_path: self.unmute_sound_path.clone(),
+            on_mute_command: self.on_mute_command.clone(),
+            on_unmute_command: self.on_unmute_command.clone(),
+        }
     }
+}
+
+/// All form fields snapshotted for change detection — no element-count limit.
+#[derive(PartialEq)]
+struct FormSnapshot {
+    color_text: String,
+    color_rgb: [f32; 3],
+    hotkey: String,
+    mute_inputs_index: usize,
+    sound_enabled: bool,
+    mute_sound_volume: f32,
+    unmute_sound_volume: f32,
+    autostart: bool,
+    notifications_enabled: bool,
+    mute_sound_path: String,
+    unmute_sound_path: String,
+    on_mute_command: String,
+    on_unmute_command: String,
 }
 
 impl eframe::App for SettingsApp {
@@ -265,6 +282,19 @@ impl eframe::App for SettingsApp {
                 ui.checkbox(&mut self.sound_enabled, "Sound Feedback");
                 ui.add_space(4.0);
 
+                // Measure "Browse..." text width so Play buttons can match.
+                let browse_text_width = ui.fonts(|f| {
+                    f.layout_no_wrap(
+                        "Browse...".into(),
+                        egui::TextStyle::Button.resolve(ui.style()),
+                        egui::Color32::WHITE,
+                    )
+                    .size()
+                    .x
+                });
+                let browse_btn_width = (browse_text_width + ui.spacing().button_padding.x * 2.0)
+                    .max(ui.spacing().interact_size.x);
+
                 egui::Grid::new("sound_grid")
                     .num_columns(2)
                     .min_col_width(80.0)
@@ -272,14 +302,6 @@ impl eframe::App for SettingsApp {
                     .show(ui, |ui| {
                         ui.label("Mute Sound");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Play").clicked() {
-                                if self.preview_player.is_none() {
-                                    self.preview_player = SoundPreviewPlayer::try_new();
-                                }
-                                if let Some(ref player) = self.preview_player {
-                                    player.play(&self.mute_sound_path, crate::sound::SOUND_MUTED);
-                                }
-                            }
                             if !self.mute_sound_path.is_empty() && ui.button("Clear").clicked() {
                                 self.mute_sound_path.clear();
                             }
@@ -296,17 +318,17 @@ impl eframe::App for SettingsApp {
                         });
                         ui.end_row();
 
+                        volume_row(
+                            ui,
+                            browse_btn_width,
+                            &mut self.mute_sound_volume,
+                            &self.mute_sound_path,
+                            crate::sound::SOUND_MUTED,
+                            &mut self.preview_player,
+                        );
+
                         ui.label("Unmute Sound");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Play").clicked() {
-                                if self.preview_player.is_none() {
-                                    self.preview_player = SoundPreviewPlayer::try_new();
-                                }
-                                if let Some(ref player) = self.preview_player {
-                                    player
-                                        .play(&self.unmute_sound_path, crate::sound::SOUND_UNMUTED);
-                                }
-                            }
                             if !self.unmute_sound_path.is_empty() && ui.button("Clear").clicked() {
                                 self.unmute_sound_path.clear();
                             }
@@ -322,6 +344,15 @@ impl eframe::App for SettingsApp {
                             );
                         });
                         ui.end_row();
+
+                        volume_row(
+                            ui,
+                            browse_btn_width,
+                            &mut self.unmute_sound_volume,
+                            &self.unmute_sound_path,
+                            crate::sound::SOUND_UNMUTED,
+                            &mut self.preview_player,
+                        );
                     });
             });
 
@@ -331,6 +362,7 @@ impl eframe::App for SettingsApp {
                 ui.checkbox(&mut self.autostart, "Start with Windows");
                 #[cfg(not(windows))]
                 ui.checkbox(&mut self.autostart, "Start with System");
+                ui.checkbox(&mut self.notifications_enabled, "Desktop notifications");
             });
 
             // ── Advanced section (collapsible, collapsed by default) ──
@@ -346,10 +378,18 @@ impl eframe::App for SettingsApp {
                                 let text_width = ui.available_width() - 4.0;
                                 ui.horizontal(|ui| {
                                     ui.label(egui::RichText::new("Hooks").strong());
-                                    ui.label("ℹ").on_hover_text(
-                                        "Shell commands run when mute state changes.\n\
-                                         Example: curl -X POST https://example.com/webhook",
-                                    );
+                                    ui.label("ℹ").on_hover_ui(|ui| {
+                                        ui.label("Shell commands run when mute state changes.");
+                                        ui.horizontal(|ui| {
+                                            ui.label("Example:");
+                                            ui.label(
+                                                egui::RichText::new(
+                                                    "curl -X POST https://example.com/webhook",
+                                                )
+                                                .monospace(),
+                                            );
+                                        });
+                                    });
                                 });
                                 ui.add_space(2.0);
                                 ui.label("On mute");
@@ -486,7 +526,10 @@ pub(crate) struct ValidateParams<'a> {
     pub color_rgb: [f32; 3],
     pub hotkey: &'a str,
     pub sound_enabled: bool,
+    pub mute_sound_volume: f32,
+    pub unmute_sound_volume: f32,
     pub autostart: bool,
+    pub notifications_enabled: bool,
     pub mute_inputs_index: usize,
     pub input_count: usize,
     pub mute_sound_path: &'a str,
@@ -523,11 +566,13 @@ pub(crate) fn build_and_validate_config(p: &ValidateParams<'_>) -> Result<Config
             sound_enabled: p.sound_enabled,
             mute_sound_path: p.mute_sound_path.to_string(),
             unmute_sound_path: p.unmute_sound_path.to_string(),
+            mute_sound_volume: p.mute_sound_volume,
+            unmute_sound_volume: p.unmute_sound_volume,
         },
         system: focusmute_lib::config::SystemConfig {
             autostart: p.autostart,
             device_serial: p.original.system.device_serial.clone(),
-            notifications_enabled: p.original.system.notifications_enabled,
+            notifications_enabled: p.notifications_enabled,
         },
         hooks: focusmute_lib::config::HooksConfig {
             on_mute_command: p.on_mute_command.to_string(),
@@ -562,6 +607,46 @@ pub(crate) fn build_and_validate_config(p: &ValidateParams<'_>) -> Result<Config
     }
 }
 
+/// Render a volume slider row inside a sound grid (label + RTL: slider, DragValue, Play).
+fn volume_row(
+    ui: &mut egui::Ui,
+    browse_btn_width: f32,
+    volume: &mut f32,
+    sound_path: &str,
+    builtin_sound: &'static [u8],
+    preview_player: &mut Option<SoundPreviewPlayer>,
+) {
+    ui.label("Volume");
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let play_btn = egui::Button::new("Play").min_size(egui::vec2(browse_btn_width, 0.0));
+        if ui.add(play_btn).clicked() {
+            if preview_player.is_none() {
+                *preview_player = SoundPreviewPlayer::try_new();
+            }
+            if let Some(player) = preview_player.as_ref() {
+                player.play(sound_path, builtin_sound, *volume);
+            }
+        }
+        let mut pct = *volume * 100.0;
+        if ui
+            .add(
+                egui::DragValue::new(&mut pct)
+                    .range(0.0..=100.0)
+                    .suffix("%")
+                    .max_decimals(0),
+            )
+            .changed()
+        {
+            *volume = (pct / 100.0).clamp(0.0, 1.0);
+        }
+        let saved = ui.spacing().slider_width;
+        ui.spacing_mut().slider_width = ui.available_width();
+        ui.add(egui::Slider::new(volume, 0.0..=1.0).show_value(false));
+        ui.spacing_mut().slider_width = saved;
+    });
+    ui.end_row();
+}
+
 /// Render a section with a title and grouped frame that spans the full width.
 fn section_frame(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(6.0);
@@ -590,53 +675,50 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    /// Helper: build a valid config with defaults, returning Ok.
-    fn valid_build() -> Result<Config, Vec<String>> {
-        build_and_validate_config(&ValidateParams {
+    /// Default valid params — tests override only the fields they care about.
+    fn default_test_params(original: &Config) -> ValidateParams<'_> {
+        ValidateParams {
             color_dirty: &ColorDirty::Neither,
             color_text: "#FF0000",
             color_rgb: [1.0, 0.0, 0.0],
             hotkey: "Ctrl+Shift+M",
             sound_enabled: true,
+            mute_sound_volume: 1.0,
+            unmute_sound_volume: 1.0,
             autostart: false,
+            notifications_enabled: false,
             mute_inputs_index: 0,
             input_count: 2,
             mute_sound_path: "",
             unmute_sound_path: "",
             on_mute_command: "",
             on_unmute_command: "",
-            original: &Config::default(),
+            original,
             max_sound_bytes: 10_000_000,
-        })
+        }
     }
 
     #[test]
     fn build_valid_inputs_returns_ok() {
-        let config = valid_build().expect("should be Ok");
+        let orig = Config::default();
+        let config = build_and_validate_config(&default_test_params(&orig)).expect("should be Ok");
         assert_eq!(config.indicator.mute_color, "#FF0000");
         assert_eq!(config.keyboard.hotkey, "Ctrl+Shift+M");
         assert!(config.sound.sound_enabled);
+        assert_eq!(config.sound.mute_sound_volume, 1.0);
+        assert_eq!(config.sound.unmute_sound_volume, 1.0);
         assert!(!config.system.autostart);
         assert_eq!(config.indicator.mute_inputs, "all");
     }
 
     #[test]
     fn build_invalid_color_returns_err() {
+        let orig = Config::default();
         let result = build_and_validate_config(&ValidateParams {
             color_dirty: &ColorDirty::Text,
             color_text: "not-a-color",
             color_rgb: [0.0, 0.0, 0.0],
-            hotkey: "Ctrl+Shift+M",
-            sound_enabled: true,
-            autostart: false,
-            mute_inputs_index: 0,
-            input_count: 2,
-            mute_sound_path: "",
-            unmute_sound_path: "",
-            on_mute_command: "",
-            on_unmute_command: "",
-            original: &Config::default(),
-            max_sound_bytes: 10_000_000,
+            ..default_test_params(&orig)
         });
         assert!(result.is_err());
         let errs = result.unwrap_err();
@@ -648,21 +730,10 @@ mod tests {
 
     #[test]
     fn build_empty_hotkey_returns_err() {
+        let orig = Config::default();
         let result = build_and_validate_config(&ValidateParams {
-            color_dirty: &ColorDirty::Neither,
-            color_text: "#FF0000",
-            color_rgb: [1.0, 0.0, 0.0],
             hotkey: "",
-            sound_enabled: true,
-            autostart: false,
-            mute_inputs_index: 0,
-            input_count: 2,
-            mute_sound_path: "",
-            unmute_sound_path: "",
-            on_mute_command: "",
-            on_unmute_command: "",
-            original: &Config::default(),
-            max_sound_bytes: 10_000_000,
+            ..default_test_params(&orig)
         });
         // Empty hotkey triggers the Config::validate error (hotkey required)
         assert!(result.is_err());
@@ -675,21 +746,10 @@ mod tests {
 
     #[test]
     fn build_invalid_hotkey_syntax_returns_err() {
+        let orig = Config::default();
         let result = build_and_validate_config(&ValidateParams {
-            color_dirty: &ColorDirty::Neither,
-            color_text: "#FF0000",
-            color_rgb: [1.0, 0.0, 0.0],
             hotkey: "Ctrl+Blah",
-            sound_enabled: true,
-            autostart: false,
-            mute_inputs_index: 0,
-            input_count: 2,
-            mute_sound_path: "",
-            unmute_sound_path: "",
-            on_mute_command: "",
-            on_unmute_command: "",
-            original: &Config::default(),
-            max_sound_bytes: 10_000_000,
+            ..default_test_params(&orig)
         });
         assert!(result.is_err());
         let errs = result.unwrap_err();
@@ -701,21 +761,12 @@ mod tests {
 
     #[test]
     fn build_picker_dirty_uses_rgb_conversion() {
+        let orig = Config::default();
         let config = build_and_validate_config(&ValidateParams {
             color_dirty: &ColorDirty::Picker,
             color_text: "garbage-text",
             color_rgb: [0.0, 1.0, 0.0],
-            hotkey: "Ctrl+Shift+M",
-            sound_enabled: true,
-            autostart: false,
-            mute_inputs_index: 0,
-            input_count: 2,
-            mute_sound_path: "",
-            unmute_sound_path: "",
-            on_mute_command: "",
-            on_unmute_command: "",
-            original: &Config::default(),
-            max_sound_bytes: 10_000_000,
+            ..default_test_params(&orig)
         })
         .expect("picker dirty should use RGB, not text");
         assert_eq!(config.indicator.mute_color, "#00FF00");
@@ -730,52 +781,30 @@ mod tests {
             },
             system: focusmute_lib::config::SystemConfig {
                 device_serial: "ABC123".to_string(),
-                notifications_enabled: true,
                 ..Default::default()
             },
             ..Config::default()
         };
 
         let config = build_and_validate_config(&ValidateParams {
-            color_dirty: &ColorDirty::Neither,
-            color_text: "#FF0000",
-            color_rgb: [1.0, 0.0, 0.0],
-            hotkey: "Ctrl+Shift+M",
-            sound_enabled: true,
-            autostart: false,
-            mute_inputs_index: 0,
-            input_count: 2,
-            mute_sound_path: "",
-            unmute_sound_path: "",
-            on_mute_command: "",
-            on_unmute_command: "",
-            original: &original,
-            max_sound_bytes: 10_000_000,
+            notifications_enabled: true,
+            ..default_test_params(&original)
         })
         .expect("should be Ok");
 
         assert_eq!(config.system.device_serial, "ABC123");
         assert_eq!(config.indicator.input_colors.get("1").unwrap(), "#00FF00");
+        // notifications_enabled comes from the form param, not original
         assert!(config.system.notifications_enabled);
     }
 
     #[test]
     fn build_hooks_are_preserved() {
+        let orig = Config::default();
         let config = build_and_validate_config(&ValidateParams {
-            color_dirty: &ColorDirty::Neither,
-            color_text: "#FF0000",
-            color_rgb: [1.0, 0.0, 0.0],
-            hotkey: "Ctrl+Shift+M",
-            sound_enabled: true,
-            autostart: false,
-            mute_inputs_index: 0,
-            input_count: 2,
-            mute_sound_path: "",
-            unmute_sound_path: "",
             on_mute_command: "echo muted",
             on_unmute_command: "echo unmuted",
-            original: &Config::default(),
-            max_sound_bytes: 10_000_000,
+            ..default_test_params(&orig)
         })
         .expect("should be Ok");
 
@@ -783,90 +812,20 @@ mod tests {
         assert_eq!(config.hooks.on_unmute_command, "echo unmuted");
     }
 
-    #[test]
-    fn hex_to_rgb_valid_hex() {
-        let rgb = led::parse_color("#FF0000")
-            .ok()
-            .map(led::color_to_rgb)
-            .unwrap();
-        assert!((rgb[0] - 1.0).abs() < 0.01);
-        assert!(rgb[1].abs() < 0.01);
-        assert!(rgb[2].abs() < 0.01);
-    }
-
-    #[test]
-    fn hex_to_rgb_named_color() {
-        let rgb = led::parse_color("blue")
-            .ok()
-            .map(led::color_to_rgb)
-            .unwrap();
-        assert!(rgb[0].abs() < 0.01);
-        assert!(rgb[1].abs() < 0.01);
-        assert!((rgb[2] - 1.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn hex_to_rgb_invalid() {
-        assert!(led::parse_color("chartreuse").is_err());
-        assert!(led::parse_color("#GGG").is_err());
-    }
-
-    #[test]
-    fn rgb_to_hex_roundtrip() {
-        let rgb = [1.0, 0.0, 0.0];
-        assert_eq!(led::rgb_to_hex(rgb), "#FF0000");
-    }
-
-    #[test]
-    fn rgb_to_hex_mixed() {
-        let rgb = [0.0, 0.5, 1.0];
-        let hex = led::rgb_to_hex(rgb);
-        assert_eq!(hex, "#0080FF");
-    }
-
-    #[test]
-    fn hex_rgb_roundtrip() {
-        for color in &[
-            "#FF0000", "#00FF00", "#0000FF", "#ABCDEF", "#000000", "#FFFFFF",
-        ] {
-            let val = led::parse_color(color).unwrap();
-            let rgb = led::color_to_rgb(val);
-            let back = led::rgb_to_hex(rgb);
-            assert_eq!(&back, color, "roundtrip failed for {color}");
-        }
-    }
-
-    #[test]
-    fn hex_rgb_roundtrip_named() {
-        // Named colors roundtrip through their hex representation
-        let val = led::parse_color("red").unwrap();
-        let rgb = led::color_to_rgb(val);
-        assert_eq!(led::rgb_to_hex(rgb), "#FF0000");
-
-        let val = led::parse_color("green").unwrap();
-        let rgb = led::color_to_rgb(val);
-        assert_eq!(led::rgb_to_hex(rgb), "#00FF00");
-    }
+    // NOTE: Color conversion tests (hex_to_rgb, rgb_to_hex, roundtrips) removed —
+    // fully covered by led::color::tests in focusmute-lib.
 
     // ── T2: Additional settings dialog validation tests ──
 
     #[test]
     fn build_multiple_simultaneous_errors() {
+        let orig = Config::default();
         let result = build_and_validate_config(&ValidateParams {
             color_dirty: &ColorDirty::Text,
             color_text: "not-a-color",
             color_rgb: [0.0, 0.0, 0.0],
             hotkey: "",
-            sound_enabled: true,
-            autostart: false,
-            mute_inputs_index: 0,
-            input_count: 2,
-            mute_sound_path: "",
-            unmute_sound_path: "",
-            on_mute_command: "",
-            on_unmute_command: "",
-            original: &Config::default(),
-            max_sound_bytes: 10_000_000,
+            ..default_test_params(&orig)
         });
         assert!(result.is_err());
         let errs = result.unwrap_err();
@@ -881,21 +840,12 @@ mod tests {
 
     #[test]
     fn build_whitespace_only_color_returns_err() {
+        let orig = Config::default();
         let result = build_and_validate_config(&ValidateParams {
             color_dirty: &ColorDirty::Text,
             color_text: "   ",
             color_rgb: [0.0, 0.0, 0.0],
-            hotkey: "Ctrl+Shift+M",
-            sound_enabled: true,
-            autostart: false,
-            mute_inputs_index: 0,
-            input_count: 2,
-            mute_sound_path: "",
-            unmute_sound_path: "",
-            on_mute_command: "",
-            on_unmute_command: "",
-            original: &Config::default(),
-            max_sound_bytes: 10_000_000,
+            ..default_test_params(&orig)
         });
         assert!(result.is_err());
         let errs = result.unwrap_err();
@@ -909,21 +859,12 @@ mod tests {
     fn build_picker_dirty_overrides_invalid_text() {
         // When picker is dirty, the RGB value is used even if color_text is invalid.
         // This tests that validation passes because the picker value is valid.
+        let orig = Config::default();
         let result = build_and_validate_config(&ValidateParams {
             color_dirty: &ColorDirty::Picker,
             color_text: "invalid",
             color_rgb: [0.5, 0.5, 0.5],
-            hotkey: "Ctrl+Shift+M",
-            sound_enabled: true,
-            autostart: false,
-            mute_inputs_index: 0,
-            input_count: 2,
-            mute_sound_path: "",
-            unmute_sound_path: "",
-            on_mute_command: "",
-            on_unmute_command: "",
-            original: &Config::default(),
-            max_sound_bytes: 10_000_000,
+            ..default_test_params(&orig)
         });
         assert!(
             result.is_ok(),
@@ -931,5 +872,82 @@ mod tests {
         );
         let config = result.unwrap();
         assert_eq!(config.indicator.mute_color, "#808080");
+    }
+
+    #[test]
+    fn build_independent_sound_volumes() {
+        let orig = Config::default();
+        let config = build_and_validate_config(&ValidateParams {
+            mute_sound_volume: 0.3,
+            unmute_sound_volume: 0.8,
+            ..default_test_params(&orig)
+        })
+        .expect("should be Ok");
+        assert_eq!(config.sound.mute_sound_volume, 0.3);
+        assert_eq!(config.sound.unmute_sound_volume, 0.8);
+    }
+
+    #[test]
+    fn build_sound_volume_out_of_range_returns_err() {
+        let orig = Config::default();
+        for bad in [1.5, -0.1] {
+            let result = build_and_validate_config(&ValidateParams {
+                mute_sound_volume: bad,
+                ..default_test_params(&orig)
+            });
+            assert!(
+                result.is_err(),
+                "mute_sound_volume {bad} should fail validation"
+            );
+            let errs = result.unwrap_err();
+            assert!(
+                errs.iter().any(|e| e.to_lowercase().contains("volume")),
+                "expected volume error for {bad}, got: {errs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_notifications_enabled_true_preserved() {
+        let orig = Config::default();
+        let config = build_and_validate_config(&ValidateParams {
+            notifications_enabled: true,
+            ..default_test_params(&orig)
+        })
+        .expect("should be Ok");
+        assert!(config.system.notifications_enabled);
+    }
+
+    #[test]
+    fn build_nan_sound_volume_returns_err() {
+        let orig = Config::default();
+        let result = build_and_validate_config(&ValidateParams {
+            mute_sound_volume: f32::NAN,
+            ..default_test_params(&orig)
+        });
+        assert!(
+            result.is_err(),
+            "NaN mute_sound_volume should fail validation"
+        );
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.to_lowercase().contains("volume")),
+            "expected volume error for NaN, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn build_text_dirty_uses_text_not_rgb() {
+        // When color_dirty is Text and text is valid, the text value should be used
+        // (not the RGB picker value).
+        let orig = Config::default();
+        let config = build_and_validate_config(&ValidateParams {
+            color_dirty: &ColorDirty::Text,
+            color_text: "#00FF00",
+            color_rgb: [1.0, 0.0, 0.0], // red — should be ignored
+            ..default_test_params(&orig)
+        })
+        .expect("valid text color should succeed");
+        assert_eq!(config.indicator.mute_color, "#00FF00");
     }
 }

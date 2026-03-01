@@ -85,7 +85,7 @@ focusmute-cli [--verbose|-v] [--config <path>] <command>
 |---------|-------------|
 | `monitor` | Watch mic mute state and update LEDs in real time |
 | `status` | Show device, microphone, and config status (`--json`) |
-| `config` | Show current configuration and file paths (`--json`) |
+| `config` | Show current configuration and file paths (`--json`, `--edit` to open in `$VISUAL`/`$EDITOR`) |
 | `devices` | List connected Focusrite devices (`--json`) |
 | `probe` | Detect device and extract firmware schema (`--dump-schema` for full JSON) |
 | `map` | Interactive LED identification (lights one index at a time) |
@@ -116,6 +116,8 @@ hotkey = "Ctrl+Shift+M"
 
 [sound]
 sound_enabled = true
+mute_sound_volume = 1.0
+unmute_sound_volume = 1.0
 mute_sound_path = ""
 unmute_sound_path = ""
 
@@ -136,6 +138,8 @@ on_unmute_command = ""
 | `[indicator.input_colors]` | `{}` | Per-input mute colors (TOML table, e.g. `1 = "#FF0000"`) |
 | `[keyboard].hotkey` | `"Ctrl+Shift+M"` | Global hotkey (tray app; X11 only on Linux) |
 | `[sound].sound_enabled` | `true` | Play sound on mute/unmute |
+| `[sound].mute_sound_volume` | `1.0` | Volume for mute sound (0.0–1.0) |
+| `[sound].unmute_sound_volume` | `1.0` | Volume for unmute sound (0.0–1.0) |
 | `[sound].mute_sound_path` | `""` | Custom WAV path (empty = built-in) |
 | `[sound].unmute_sound_path` | `""` | Custom WAV path (empty = built-in) |
 | `[system].autostart` | `false` | Start on login (tray app) |
