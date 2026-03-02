@@ -10,7 +10,7 @@ pub(super) fn cmd_predict(schema_file: String, json_output: bool) -> Result<()> 
     if json_output {
         match serde_json::to_string_pretty(&pl) {
             Ok(json) => println!("{json}"),
-            Err(e) => log::error!("serializing layout: {e}"),
+            Err(e) => log::error!("[layout] serializing layout: {e}"),
         }
     } else {
         let w = kv_width(

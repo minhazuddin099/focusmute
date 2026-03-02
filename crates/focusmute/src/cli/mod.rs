@@ -202,7 +202,7 @@ pub(super) fn load_config(path: Option<&Path>) -> Config {
 
 /// Warn if `--json` was passed to a command that doesn't support it.
 fn warn_json_unsupported(cmd_name: &str) {
-    log::warn!("--json is not supported for `{cmd_name}` (ignored)");
+    log::warn!("[cli] --json is not supported for `{cmd_name}` (ignored)");
 }
 
 pub fn run(cmd: Command, json: bool, config_path: Option<&Path>) -> Result<()> {

@@ -34,7 +34,7 @@ impl PlatformAdapter for LinuxAdapter {
         });
         if is_wayland() {
             log::warn!(
-                "Global hotkey may not work on Wayland. \
+                "[hotkey] may not work on Wayland. \
                  Use the tray menu to toggle mute."
             );
         }
@@ -43,9 +43,12 @@ impl PlatformAdapter for LinuxAdapter {
 
     fn create_monitor() -> Option<PulseAudioMonitor> {
         match PulseAudioMonitor::new() {
-            Ok(m) => Some(m),
+            Ok(m) => {
+                log::info!("[audio] PulseAudio mute monitor ready");
+                Some(m)
+            }
             Err(e) => {
-                log::warn!("could not create audio monitor: {e}");
+                log::warn!("[audio] could not create mute monitor: {e}");
                 None
             }
         }

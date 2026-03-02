@@ -8,6 +8,8 @@
 #[cfg(any(windows, target_os = "linux"))]
 mod icon;
 #[cfg(any(windows, target_os = "linux"))]
+mod notification;
+#[cfg(any(windows, target_os = "linux"))]
 mod settings_dialog;
 #[cfg(any(windows, target_os = "linux"))]
 mod sound;

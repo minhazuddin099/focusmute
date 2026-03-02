@@ -9,7 +9,7 @@
 //! - Icon caching, autostart helpers
 
 mod hotkey;
-mod icon;
+pub(crate) mod icon;
 mod menu;
 
 pub use hotkey::{HotkeyState, register_hotkey, reregister_hotkey};
@@ -40,6 +40,7 @@ pub struct TrayResources {
     pub hotkey: HotkeyState,
     pub sink: Option<rodio::Sink>,
     pub _audio_stream: Option<rodio::OutputStream>,
+    pub notifier: crate::notification::Notifier,
 }
 
 impl TrayResources {
@@ -58,6 +59,7 @@ impl TrayResources {
                 hotkey,
                 sink,
                 _audio_stream,
+                notifier: crate::notification::Notifier::new(),
             },
             warnings,
         ))
@@ -240,12 +242,12 @@ impl TrayState {
                     if self.indicator.is_muted()
                         && let Err(e) = self.indicator.apply_mute(&dev)
                     {
-                        log::warn!("could not apply mute after first connect: {e}");
+                        log::warn!("[device] could not apply mute after first connect: {e}");
                     }
                     Some(dev)
                 }
                 Err(e) => {
-                    log::warn!("could not resolve device context on first connect: {e}");
+                    log::warn!("[device] could not resolve context on first connect: {e}");
                     None
                 }
             }
@@ -319,7 +321,7 @@ impl TrayState {
         // Save to disk and update config
         self.config = new_config;
         if let Err(e) = self.config.save() {
-            log::warn!("could not save config: {e}");
+            log::warn!("[config] could not save: {e}");
         }
 
         warnings
@@ -354,7 +356,7 @@ impl TrayState {
     /// Restore LED state on exit.
     pub fn restore_on_exit(&self, device: &impl ScarlettDevice) {
         if let Err(e) = led::restore_on_exit(device, self.indicator.strategy()) {
-            log::warn!("could not restore LED state: {e}");
+            log::warn!("[device] could not restore LED state: {e}");
         }
     }
 }
@@ -375,6 +377,7 @@ pub fn handle_menu_event(
     } else if event.id() == menu.toggle_item.id() {
         toggle_mute_fn(state.indicator.is_muted());
     } else if event.id() == menu.settings_item.id() {
+        log::info!("[settings] dialog opened");
         let info = device.as_ref().map(|d| d.info());
         let profile = state.ctx.as_ref().and_then(|c| c.profile);
         if let Some(new_config) =
@@ -404,6 +407,9 @@ pub fn handle_menu_event(
                 menu.toggle_item
                     .set_text(format!("Toggle Mute\t{}", new_hotkey_str));
             }
+            log::info!("[settings] saved");
+        } else {
+            log::info!("[settings] cancelled");
         }
     } else if event.id() == menu.reconnect_item.id() {
         state.reset_backoff();

@@ -91,6 +91,41 @@ impl ReconnectState {
     }
 }
 
+/// Testable variant of `try_reopen` that accepts a device factory closure.
+///
+/// - `device_serial`: preferred serial number (empty = auto-select).
+/// - `open_fn`: closure that attempts to open the device by serial.
+/// - Returns `None` without attempting if the backoff timer hasn't elapsed.
+/// - On success, records success and returns the new device.
+/// - On failure, records failure, logs the backoff schedule, and returns `None`.
+pub fn try_reopen_with<D, F>(
+    state: &mut ReconnectState,
+    device_serial: &str,
+    open_fn: F,
+) -> Option<D>
+where
+    F: FnOnce(&str) -> crate::device::Result<D>,
+{
+    if !state.should_attempt() {
+        return None;
+    }
+    match open_fn(device_serial) {
+        Ok(dev) => {
+            state.record_success();
+            Some(dev)
+        }
+        Err(e) => {
+            state.record_failure();
+            log::warn!(
+                "[device] reconnect failed: {e} (attempt {}, retry in {:.1}s)",
+                state.consecutive_failures(),
+                state.current_delay().as_secs_f64()
+            );
+            None
+        }
+    }
+}
+
 /// Attempt to reopen the device, respecting backoff timing.
 ///
 /// - `device_serial`: preferred serial number (empty = auto-select).
@@ -101,24 +136,26 @@ pub fn try_reopen(
     state: &mut ReconnectState,
     device_serial: &str,
 ) -> Option<crate::device::PlatformDevice> {
-    if !state.should_attempt() {
-        return None;
+    try_reopen_with(state, device_serial, crate::device::open_device_by_serial)
+}
+
+/// Testable variant of `try_reconnect_and_refresh` that accepts a device factory closure.
+pub fn try_reconnect_and_refresh_with<D: crate::device::ScarlettDevice, F>(
+    reconnect: &mut ReconnectState,
+    strategy: &crate::led::MuteStrategy,
+    mute_color: u32,
+    is_muted: bool,
+    device_serial: &str,
+    open_fn: F,
+) -> Option<D>
+where
+    F: FnOnce(&str) -> crate::device::Result<D>,
+{
+    let dev = try_reopen_with(reconnect, device_serial, open_fn)?;
+    if let Err(e) = crate::led::refresh_after_reconnect(&dev, strategy, mute_color, is_muted) {
+        log::warn!("[device] could not re-apply mute indicator after reconnect: {e}");
     }
-    match crate::device::open_device_by_serial(device_serial) {
-        Ok(dev) => {
-            state.record_success();
-            Some(dev)
-        }
-        Err(e) => {
-            state.record_failure();
-            log::warn!(
-                "reconnect failed: {e} (attempt {}, retry in {:.1}s)",
-                state.consecutive_failures(),
-                state.current_delay().as_secs_f64()
-            );
-            None
-        }
-    }
+    Some(dev)
 }
 
 /// Attempt to reopen the device and re-apply mute indicator after reconnection.
@@ -132,11 +169,14 @@ pub fn try_reconnect_and_refresh(
     is_muted: bool,
     device_serial: &str,
 ) -> Option<crate::device::PlatformDevice> {
-    let dev = try_reopen(reconnect, device_serial)?;
-    if let Err(e) = crate::led::refresh_after_reconnect(&dev, strategy, mute_color, is_muted) {
-        log::warn!("could not re-apply mute indicator after reconnect: {e}");
-    }
-    Some(dev)
+    try_reconnect_and_refresh_with(
+        reconnect,
+        strategy,
+        mute_color,
+        is_muted,
+        device_serial,
+        crate::device::open_device_by_serial,
+    )
 }
 
 #[cfg(test)]
@@ -274,5 +314,134 @@ mod tests {
 
         assert_eq!(state.consecutive_failures(), 0);
         assert_eq!(state.current_delay(), Duration::from_secs(1));
+    }
+
+    // ── try_reopen_with / try_reconnect_and_refresh_with ──
+
+    use crate::device::DeviceError;
+    use crate::device::mock::MockDevice;
+
+    fn mock_open_ok(_serial: &str) -> crate::device::Result<MockDevice> {
+        Ok(MockDevice::new())
+    }
+
+    fn mock_open_err(_serial: &str) -> crate::device::Result<MockDevice> {
+        Err(DeviceError::TransactFailed("no device".into()))
+    }
+
+    fn make_strategy() -> crate::led::MuteStrategy {
+        crate::led::MuteStrategy {
+            input_indices: vec![0],
+            number_leds: vec![0],
+            mute_colors: vec![],
+            selected_color: 0x20FF_0000,
+            unselected_color: 0x88FF_FF00,
+        }
+    }
+
+    #[test]
+    fn try_reopen_with_success() {
+        let mut state = ReconnectState::with_defaults();
+        let result = try_reopen_with(&mut state, "MOCK123", mock_open_ok);
+        assert!(result.is_some());
+        assert_eq!(state.consecutive_failures(), 0);
+        assert!(state.should_attempt()); // reset after success
+    }
+
+    #[test]
+    fn try_reopen_with_failure() {
+        let mut state = ReconnectState::with_defaults();
+        let result: Option<MockDevice> = try_reopen_with(&mut state, "MOCK123", mock_open_err);
+        assert!(result.is_none());
+        assert_eq!(state.consecutive_failures(), 1);
+    }
+
+    #[test]
+    fn try_reopen_with_skips_during_backoff() {
+        let config = ReconnectConfig {
+            initial_delay: Duration::from_secs(60),
+            max_delay: Duration::from_secs(60),
+            multiplier: 2.0,
+        };
+        let mut state = ReconnectState::new(config);
+
+        // First failure puts us in backoff
+        let _: Option<MockDevice> = try_reopen_with(&mut state, "", mock_open_err);
+        assert_eq!(state.consecutive_failures(), 1);
+
+        // Track whether the factory was called
+        let mut called = false;
+        let result: Option<MockDevice> = try_reopen_with(&mut state, "", |_serial| {
+            called = true;
+            Ok(MockDevice::new())
+        });
+        assert!(result.is_none(), "should skip during backoff");
+        assert!(!called, "open_fn should not be called during backoff");
+        assert_eq!(state.consecutive_failures(), 1, "failure count unchanged");
+    }
+
+    #[test]
+    fn try_reconnect_and_refresh_with_success() {
+        let mut state = ReconnectState::with_defaults();
+        let strategy = make_strategy();
+        let mute_color = 0xFF00_0000;
+
+        // Not muted → refresh is a no-op, device returned
+        let result: Option<MockDevice> = try_reconnect_and_refresh_with(
+            &mut state,
+            &strategy,
+            mute_color,
+            false,
+            "MOCK123",
+            mock_open_ok,
+        );
+        assert!(result.is_some());
+        assert_eq!(state.consecutive_failures(), 0);
+    }
+
+    #[test]
+    fn try_reconnect_and_refresh_with_led_failure() {
+        let mut state = ReconnectState::with_defaults();
+        let strategy = make_strategy();
+        let mute_color = 0xFF00_0000;
+
+        // Mock device that fails set_descriptor → LED refresh will fail,
+        // but the device should still be returned.
+        let result: Option<MockDevice> = try_reconnect_and_refresh_with(
+            &mut state,
+            &strategy,
+            mute_color,
+            true, // muted → triggers LED refresh
+            "MOCK123",
+            |_serial| {
+                let dev = MockDevice::new();
+                dev.fail_set_descriptor.set(true);
+                Ok(dev)
+            },
+        );
+        assert!(
+            result.is_some(),
+            "device should be returned despite LED failure"
+        );
+        // Verify the device has fail_set_descriptor set (confirming our mock was used)
+        assert!(result.unwrap().fail_set_descriptor.get());
+    }
+
+    #[test]
+    fn try_reconnect_and_refresh_with_open_failure() {
+        let mut state = ReconnectState::with_defaults();
+        let strategy = make_strategy();
+        let mute_color = 0xFF00_0000;
+
+        let result: Option<MockDevice> = try_reconnect_and_refresh_with(
+            &mut state,
+            &strategy,
+            mute_color,
+            true,
+            "MOCK123",
+            mock_open_err,
+        );
+        assert!(result.is_none());
+        assert_eq!(state.consecutive_failures(), 1);
     }
 }

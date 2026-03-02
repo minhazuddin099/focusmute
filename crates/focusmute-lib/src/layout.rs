@@ -309,7 +309,25 @@ pub fn generate_model_profile_code(layout: &PredictedLayout) -> String {
     code.push_str(&format!(
         "    output_halo_segments: {output_start}..{output_end},\n"
     ));
-    code.push_str("    button_labels: &[], // TODO: fill in button labels\n");
+    // Collect button labels from the predicted layout
+    let buttons: Vec<&PredictedLed> = layout
+        .leds
+        .iter()
+        .filter(|led| led.zone == LedZone::Button)
+        .collect();
+
+    if buttons.is_empty() {
+        code.push_str("    button_labels: &[],\n");
+    } else {
+        code.push_str("    button_labels: &[\n");
+        for btn in &buttons {
+            code.push_str(&format!(
+                "        \"{}\",  // {} ({})\n",
+                btn.label, btn.index, btn.confidence
+            ));
+        }
+        code.push_str("    ],\n");
+    }
     code.push_str("};\n");
 
     code
@@ -381,6 +399,7 @@ mod tests {
             ],
             app_space_features: vec!["directMonitoring".into(), "selectedInput".into()],
             firmware_version: "2.0.2417.0".into(),
+            schema_format_version: crate::schema::SCHEMA_FORMAT_VERSION,
         }
     }
 
@@ -446,6 +465,7 @@ mod tests {
             input_controls: vec!["air".into(), "instrument".into()],
             app_space_features: vec!["directMonitoring".into()],
             firmware_version: String::new(),
+            schema_format_version: 0,
         };
         let layout = predict_layout(&schema).unwrap();
         assert_eq!(layout.input_count, 4);
@@ -479,6 +499,7 @@ mod tests {
             input_controls: vec!["air".into(), "instrument".into()],
             app_space_features: vec![],
             firmware_version: String::new(),
+            schema_format_version: 0,
         };
         let layout = predict_layout(&schema).unwrap();
         assert_eq!(layout.input_count, 1);
@@ -508,6 +529,7 @@ mod tests {
             input_controls: vec![],
             app_space_features: vec![],
             firmware_version: String::new(),
+            schema_format_version: 0,
         };
         let layout = predict_layout(&schema).unwrap();
         assert_eq!(layout.output_halo_segments, 11); // gradient_count fallback
@@ -531,6 +553,7 @@ mod tests {
             input_controls: vec![],
             app_space_features: vec![],
             firmware_version: String::new(),
+            schema_format_version: 0,
         };
         let result = predict_layout(&schema);
         assert!(result.is_err());
@@ -558,6 +581,7 @@ mod tests {
             input_controls: vec![],
             app_space_features: vec![],
             firmware_version: String::new(),
+            schema_format_version: 0,
         };
         let result = predict_layout(&schema);
         assert!(result.is_err());
@@ -585,6 +609,7 @@ mod tests {
             input_controls: vec![],
             app_space_features: vec![],
             firmware_version: String::new(),
+            schema_format_version: 0,
         };
         let layout = predict_layout(&schema).unwrap();
         // With no control info, button labels fall back to known_button_labels()
@@ -612,6 +637,41 @@ mod tests {
         assert!(code.contains("led_count: 40"));
         assert!(!code.contains("gradient_count"));
         assert!(code.contains("output_halo_segments: 16..27"));
+
+        // Should contain button labels from predicted layout (not a TODO)
+        assert!(!code.contains("TODO"));
+        assert!(code.contains("button_labels: &["));
+        assert!(code.contains("Select button LED 1"));
+        assert!(code.contains("Inst button"));
+        assert!(code.contains("48V button"));
+        assert!(code.contains("Air button"));
+        assert!(code.contains("USB symbol"));
+    }
+
+    #[test]
+    fn generate_code_zero_buttons() {
+        let schema = SchemaConstants {
+            product_name: "Halo Only".into(),
+            max_leds: 27,
+            max_inputs: 2,
+            max_outputs: 2,
+            gradient_count: 11,
+            gradient_offset: 384,
+            gradient_notify: 9,
+            direct_led_count: 27,
+            direct_led_offset: 92,
+            metering_segments: 25,
+            input_controls: vec![],
+            app_space_features: vec![],
+            firmware_version: String::new(),
+            schema_format_version: 0,
+        };
+        let layout = predict_layout(&schema).unwrap();
+        let code = generate_model_profile_code(&layout);
+
+        // No buttons → empty button_labels array
+        assert!(code.contains("button_labels: &[],"));
+        assert!(!code.contains("TODO"));
     }
 
     #[test]
@@ -664,6 +724,7 @@ mod tests {
             input_controls: vec![],
             app_space_features: vec![],
             firmware_version: String::new(),
+            schema_format_version: 0,
         };
         let layout = predict_layout(&schema).unwrap();
         assert_eq!(layout.button_count, 0);

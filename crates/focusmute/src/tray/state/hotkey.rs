@@ -19,7 +19,7 @@ pub fn register_hotkey(hotkey_str: &str) -> focusmute_lib::error::Result<HotkeyS
         .unwrap_or_else(|_| "Ctrl+Shift+M".parse().unwrap());
     let id = hotkey.id();
     if let Err(e) = manager.register(hotkey) {
-        log::warn!("could not register hotkey '{hotkey_str}': {e}");
+        log::warn!("[hotkey] could not register '{hotkey_str}': {e}");
     }
     Ok(HotkeyState {
         manager,

@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-03-02
+
+### Added
+
+- Structured logging for debugging and issue reports: startup banner with version and config summary, device info on connect/reconnect, mute state changes, settings dialog open/save/cancel, audio monitor readiness, shutdown sequence, and hook completion (debug level)
+- Device disconnect logged when communication error causes device loss in tray app
+- Config file path logged at tray startup
+- Consistent `[tag]` prefixes on all log messages (`[audio]`, `[cli]`, `[config]`, `[device]`, `[focusmute]`, `[hotkey]`, `[layout]`, `[mute]`, `[schema]`, `[settings]`, `[sound]`)
+- Linux notification icon — `notify-rust` notifications now display the FocusMute icon (parity with Windows AUMID branding)
+- `predict` code generation now emits button labels from the predicted layout instead of an empty TODO placeholder
+- Testable `_with`/`_at` variants of `try_reopen`, `try_reconnect_and_refresh`, `save_cache`, and `extract_or_cached` for dependency-injected unit testing
+- ~13 new tests: reconnect with mock device factory (6), schema save/load/extract caching workflow (5), code generation button labels (2)
+
+### Changed
+
+- Schema cache includes format version — stale caches from older versions are automatically re-extracted
+- Windows FFI: RAII wrappers (`OwnedHandle`, `DevInfoHandle`) replace manual `CloseHandle`/`SetupDiDestroyDeviceInfoList` calls; three duplicated IOCTL functions unified into `ioctl_impl`
+- `save_cache` delegates to `save_cache_to`; `extract_or_cached` delegates to `extract_or_cached_at` (DRY)
+- Windows notifications use direct WinRT API (`ToastNotification`) instead of `notify-rust`, eliminating a cross-platform abstraction layer on Windows
+- `notify-rust` dependency moved to Linux-only
+
+### Fixed
+
+- Settings dialog window icon now uses the same 32 px ICO entry as the tray icon — the "ff" crossbar is visible at titlebar size (previously used the 256 px PNG which lost detail when downscaled)
+- Rapid mute/unmute no longer stacks toast notifications — mute-state toasts replace the previous one (Windows: WinRT `SetTag()` replacement, Linux: D-Bus `replaces_id` via `notify-rust`)
+- Toast notifications on Windows are now silent (`<audio silent="true" />`) to avoid doubling with FocusMute's own sound feedback
+
+### Infrastructure
+
+- CI check logic extracted into reusable workflow (`check.yml`) shared by CI and Release — eliminates copy-paste drift between the two pipelines
+- Fixed missing `libxkbcommon-dev` and `libegl-dev` apt packages in Release workflow (drifted from CI)
+- Third-party GitHub Actions pinned by commit SHA; release tag pattern tightened to semver (`v[0-9]+.[0-9]+.[0-9]+*`)
+- Clippy now lints all targets (`--all-targets`) including test code
+- CI concurrency group cancels superseded runs on the same branch/PR
+
 ## [0.6.0] - 2026-03-01
 
 ### Added

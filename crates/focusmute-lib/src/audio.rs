@@ -56,7 +56,7 @@ fn wait_on_signal(
         *guard = false;
         was_changed
     } else {
-        log::warn!("signal mutex poisoned — falling back to sleep");
+        log::warn!("[audio] signal mutex poisoned — falling back to sleep");
         std::thread::sleep(timeout);
         false
     }

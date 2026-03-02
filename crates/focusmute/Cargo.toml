@@ -1,6 +1,6 @@
 [package]
 name = "focusmute"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 description = "Hotkey mute control for Focusrite Scarlett interfaces"
 authors = ["Martin Simon"]
@@ -36,7 +36,6 @@ global-hotkey = "0.6"
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 rodio = { version = "0.20", default-features = false, features = ["wav"] }
 auto-launch = "0.5"
-notify-rust = "4"
 eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
 rfd = "0.15"
 single-instance = "0.3"
@@ -44,6 +43,7 @@ single-instance = "0.3"
 # Linux-only dependencies
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+notify-rust = "4"
 
 # Windows-only dependencies
 [target.'cfg(windows)'.dependencies]
@@ -52,6 +52,8 @@ windows = { version = "0.61", features = [
     "Win32_System_Console",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Foundation",
+    "Data_Xml_Dom",
+    "UI_Notifications",
 ] }
 
 [target.'cfg(windows)'.build-dependencies]

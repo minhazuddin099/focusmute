@@ -89,6 +89,7 @@ mod tests {
             input_controls: vec![],
             app_space_features: vec![],
             firmware_version: String::new(),
+            schema_format_version: 0,
         };
         let offsets = DeviceOffsets::from_schema(&sc);
         assert_eq!(offsets.direct_led_values, 100);
@@ -117,6 +118,7 @@ mod tests {
             input_controls: vec![],
             app_space_features: vec![],
             firmware_version: "2.0.2417.0".into(),
+            schema_format_version: crate::schema::SCHEMA_FORMAT_VERSION,
         };
         let from_schema = DeviceOffsets::from_schema(&sc);
         let default = DeviceOffsets::default();
@@ -157,6 +159,7 @@ mod tests {
             input_controls: vec![],
             app_space_features: vec![],
             firmware_version: String::new(),
+            schema_format_version: 0,
         });
         let cloned = offsets.clone();
         assert_eq!(cloned.enable_direct_led, offsets.enable_direct_led);

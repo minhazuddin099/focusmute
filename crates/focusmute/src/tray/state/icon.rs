@@ -3,13 +3,13 @@
 use tray_icon::Icon;
 
 // Embedded tray icons (multi-size ICO files).
-const ICON_LIVE_ICO: &[u8] = include_bytes!("../../../assets/icon-live.ico");
+pub(crate) const ICON_LIVE_ICO: &[u8] = include_bytes!("../../../assets/icon-live.ico");
 const ICON_MUTED_ICO: &[u8] = include_bytes!("../../../assets/icon-muted.ico");
 
-/// Target size when extracting tray icons from ICO files.  32 px is a good
+/// Target size when extracting icons from ICO files.  32 px is a good
 /// compromise: Windows tray icons range from 16 px (100 % DPI) to 32 px
 /// (200 % DPI), so the worst-case downscale is only 2:1.
-const TRAY_ICON_SIZE: u8 = 32;
+pub(crate) const TRAY_ICON_SIZE: u8 = 32;
 
 // ── Icon loading (decoded once, cloned on use) ──
 
@@ -44,7 +44,7 @@ impl CachedIcon {
 /// then decodes that entry's image data.  `image::load_from_memory` always
 /// returns the largest entry (256 px), which loses thin details like the
 /// crossbar when Windows downscales it to tray size (16–24 px).
-fn decode_ico_entry(
+pub(crate) fn decode_ico_entry(
     ico_data: &[u8],
     target_size: u8,
 ) -> Result<image::DynamicImage, image::ImageError> {

@@ -326,7 +326,7 @@ impl Config {
     pub fn load() -> Self {
         let (config, warnings) = Self::load_with_warnings();
         for w in &warnings {
-            log::warn!("{w}");
+            log::warn!("[config] {w}");
         }
         config
     }

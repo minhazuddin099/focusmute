@@ -8,7 +8,7 @@ use focusmute_lib::FocusmuteError;
 pub(super) fn cmd_config(json: bool, custom_path: Option<&Path>, edit: bool) -> Result<()> {
     if edit {
         if json {
-            log::warn!("--json is ignored when --edit is used");
+            log::warn!("[cli] --json is ignored when --edit is used");
         }
         let path = custom_path.map(|p| p.to_path_buf()).or_else(Config::path);
         let Some(path) = path else {

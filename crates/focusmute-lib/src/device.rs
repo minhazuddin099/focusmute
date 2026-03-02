@@ -189,22 +189,24 @@ mod win_enum {
     /// Calls `callback(path)` for each discovered path. If the callback returns
     /// `Some(T)`, enumeration stops and returns that value.
     pub fn enumerate_pal_paths<T>(mut callback: impl FnMut(String) -> Option<T>) -> Option<T> {
-        unsafe {
-            let dev_info = SetupDiGetClassDevsW(
+        use super::win_ffi::DevInfoHandle;
+
+        let dev_info = unsafe {
+            SetupDiGetClassDevsW(
                 Some(&FOCUSRITE_GUID),
                 PCWSTR::null(),
                 None,
                 DIGCF_PRESENT | DIGCF_DEVICEINTERFACE,
             )
-            .ok()?;
+            .ok()?
+        };
+        // RAII: DevInfoHandle calls SetupDiDestroyDeviceInfoList on drop.
+        let dev_info_guard = DevInfoHandle::new(dev_info);
 
-            let result = enumerate_pal_paths_inner(dev_info, &mut callback);
-            let _ = SetupDiDestroyDeviceInfoList(dev_info);
-            result
-        }
+        enumerate_pal_paths_inner(dev_info_guard.as_raw(), &mut callback)
     }
 
-    unsafe fn enumerate_pal_paths_inner<T>(
+    fn enumerate_pal_paths_inner<T>(
         dev_info: HDEVINFO,
         callback: &mut impl FnMut(String) -> Option<T>,
     ) -> Option<T> {
@@ -254,20 +256,226 @@ mod win_enum {
     }
 }
 
+// ── Windows safe FFI wrappers ──
+
+#[cfg(windows)]
+mod win_ffi {
+    use windows::Win32::Devices::DeviceAndDriverInstallation::*;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+
+    /// RAII wrapper for a Windows HANDLE. Calls CloseHandle on drop.
+    pub struct OwnedHandle(HANDLE);
+
+    impl OwnedHandle {
+        pub fn new(h: HANDLE) -> Self {
+            Self(h)
+        }
+        pub fn as_raw(&self) -> HANDLE {
+            self.0
+        }
+    }
+
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            if !self.0.is_invalid() {
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+    }
+
+    /// RAII wrapper for HDEVINFO. Calls SetupDiDestroyDeviceInfoList on drop.
+    pub struct DevInfoHandle(HDEVINFO);
+
+    impl DevInfoHandle {
+        pub fn new(h: HDEVINFO) -> Self {
+            Self(h)
+        }
+        pub fn as_raw(&self) -> HDEVINFO {
+            self.0
+        }
+    }
+
+    impl Drop for DevInfoHandle {
+        fn drop(&mut self) {
+            if !self.0.is_invalid() {
+                unsafe {
+                    let _ = SetupDiDestroyDeviceInfoList(self.0);
+                }
+            }
+        }
+    }
+
+    /// I/O completion strategy for DeviceIoControl.
+    pub enum WaitStrategy {
+        /// Synchronous — no OVERLAPPED struct.
+        Sync,
+        /// Overlapped with infinite wait.
+        Overlapped,
+        /// Overlapped with timeout in milliseconds.
+        OverlappedTimeout(u32),
+    }
+
+    /// Unified DeviceIoControl wrapper supporting all three wait strategies.
+    ///
+    /// Handles buffer allocation, pointer setup, event creation/cleanup, and
+    /// timeout/cancellation — the shared logic previously duplicated across
+    /// `ioctl_sync`, `ioctl_overlapped`, and `ioctl_overlapped_timeout`.
+    pub fn ioctl_impl(
+        handle: HANDLE,
+        ioctl_code: u32,
+        input: &[u8],
+        out_size: usize,
+        strategy: WaitStrategy,
+    ) -> std::result::Result<Vec<u8>, String> {
+        use std::mem;
+        use windows::Win32::System::IO::{
+            CancelIoEx, DeviceIoControl, GetOverlappedResult, OVERLAPPED,
+        };
+        use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+        use windows::core::PCWSTR;
+
+        let mut output = vec![0u8; out_size];
+        let mut ret: u32 = 0;
+
+        let in_ptr = if input.is_empty() {
+            None
+        } else {
+            Some(input.as_ptr() as *const _)
+        };
+        let out_ptr = if out_size == 0 {
+            None
+        } else {
+            Some(output.as_mut_ptr() as *mut _)
+        };
+
+        match strategy {
+            WaitStrategy::Sync => {
+                unsafe {
+                    DeviceIoControl(
+                        handle,
+                        ioctl_code,
+                        in_ptr,
+                        input.len() as u32,
+                        out_ptr,
+                        out_size as u32,
+                        Some(&mut ret),
+                        None,
+                    )
+                }
+                .map_err(|e| format!("{e}"))?;
+                output.truncate(ret as usize);
+                Ok(output)
+            }
+            WaitStrategy::Overlapped => {
+                let event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
+                    .map_err(|e| format!("CreateEvent: {e}"))?;
+                let _event_guard = OwnedHandle::new(event);
+                let mut ov: OVERLAPPED = unsafe { mem::zeroed() };
+                ov.hEvent = event;
+
+                let r = unsafe {
+                    DeviceIoControl(
+                        handle,
+                        ioctl_code,
+                        in_ptr,
+                        input.len() as u32,
+                        out_ptr,
+                        out_size as u32,
+                        Some(&mut ret),
+                        Some(&mut ov),
+                    )
+                };
+                match r {
+                    Ok(()) => {}
+                    Err(e) if e.code().0 as u32 == 0x800703E5 => {
+                        // ERROR_IO_PENDING — block until I/O completes (or is cancelled).
+                        unsafe {
+                            GetOverlappedResult(handle, &ov, &mut ret, true)
+                                .map_err(|e2| format!("{e2}"))?;
+                        }
+                    }
+                    Err(e) => return Err(format!("{e}")),
+                }
+                output.truncate(ret as usize);
+                Ok(output)
+            }
+            WaitStrategy::OverlappedTimeout(timeout_ms) => {
+                let event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
+                    .map_err(|e| format!("CreateEvent: {e}"))?;
+                let _event_guard = OwnedHandle::new(event);
+                let mut ov: OVERLAPPED = unsafe { mem::zeroed() };
+                ov.hEvent = event;
+
+                let r = unsafe {
+                    DeviceIoControl(
+                        handle,
+                        ioctl_code,
+                        in_ptr,
+                        input.len() as u32,
+                        out_ptr,
+                        out_size as u32,
+                        Some(&mut ret),
+                        Some(&mut ov),
+                    )
+                };
+                match r {
+                    Ok(()) => {
+                        // Completed synchronously
+                        output.truncate(ret as usize);
+                        Ok(output)
+                    }
+                    Err(e) if e.code().0 as u32 == 0x800703E5 => {
+                        // ERROR_IO_PENDING — wait with timeout
+                        let wait = unsafe { WaitForSingleObject(event, timeout_ms) };
+                        match wait.0 {
+                            0 => {
+                                // WAIT_OBJECT_0 — completed
+                                unsafe {
+                                    GetOverlappedResult(handle, &ov, &mut ret, false)
+                                        .map_err(|e2| format!("{e2}"))?;
+                                }
+                                output.truncate(ret as usize);
+                                Ok(output)
+                            }
+                            0x102 => {
+                                // WAIT_TIMEOUT — cancel the pending I/O
+                                unsafe {
+                                    let _ = CancelIoEx(handle, Some(&ov));
+                                    // Wait for cancellation to complete
+                                    let _ = GetOverlappedResult(handle, &ov, &mut ret, true);
+                                }
+                                Err(format!("IOCTL timed out after {}ms", timeout_ms))
+                            }
+                            _ => {
+                                // WAIT_FAILED or other
+                                unsafe {
+                                    let _ = CancelIoEx(handle, Some(&ov));
+                                    let _ = GetOverlappedResult(handle, &ov, &mut ret, true);
+                                }
+                                Err("WaitForSingleObject failed".into())
+                            }
+                        }
+                    }
+                    Err(e) => Err(format!("{e}")),
+                }
+            }
+        }
+    }
+}
+
 // ── Windows implementation ──
 
 #[cfg(windows)]
 mod windows_impl {
+    use super::win_ffi::{OwnedHandle, WaitStrategy, ioctl_impl};
     use super::*;
-    use std::mem;
 
     use windows::Win32::Devices::DeviceAndDriverInstallation::*;
     use windows::Win32::Foundation::*;
     use windows::Win32::Storage::FileSystem::*;
-    use windows::Win32::System::IO::{
-        CancelIoEx, DeviceIoControl, GetOverlappedResult, OVERLAPPED,
-    };
-    use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+    use windows::Win32::System::IO::CancelIoEx;
     use windows::core::PCWSTR;
 
     /// Request/response pair for the I/O worker thread.
@@ -279,7 +487,7 @@ mod windows_impl {
     }
 
     pub struct WindowsDevice {
-        handle: HANDLE,
+        handle: OwnedHandle,
         info: DeviceInfo,
         token: u64,
         /// Channel to the dedicated I/O worker thread.
@@ -290,41 +498,6 @@ mod windows_impl {
     unsafe impl Send for WindowsDevice {}
 
     impl WindowsDevice {
-        fn ioctl_sync(
-            handle: HANDLE,
-            ioctl: u32,
-            input: &[u8],
-            out_size: usize,
-        ) -> std::result::Result<Vec<u8>, String> {
-            let mut output = vec![0u8; out_size];
-            let mut ret: u32 = 0;
-            let in_ptr = if input.is_empty() {
-                None
-            } else {
-                Some(input.as_ptr() as *const _)
-            };
-            let out_ptr = if out_size == 0 {
-                None
-            } else {
-                Some(output.as_mut_ptr() as *mut _)
-            };
-            unsafe {
-                DeviceIoControl(
-                    handle,
-                    ioctl,
-                    in_ptr,
-                    input.len() as u32,
-                    out_ptr,
-                    out_size as u32,
-                    Some(&mut ret),
-                    None,
-                )
-            }
-            .map_err(|e| format!("{e}"))?;
-            output.truncate(ret as usize);
-            Ok(output)
-        }
-
         /// Start a dedicated I/O worker thread for overlapped IOCTL calls.
         ///
         /// Returns the sender half of the channel. The worker runs until
@@ -335,7 +508,13 @@ mod windows_impl {
             std::thread::spawn(move || {
                 let h = HANDLE(handle_val as *mut _);
                 while let Ok(req) = rx.recv() {
-                    let result = Self::ioctl_overlapped(h, req.ioctl, &req.input, req.out_size);
+                    let result = ioctl_impl(
+                        h,
+                        req.ioctl,
+                        &req.input,
+                        req.out_size,
+                        WaitStrategy::Overlapped,
+                    );
                     let _ = req.reply.send(result);
                 }
             });
@@ -366,165 +545,9 @@ mod windows_impl {
                 Err(_) => {
                     // Timeout — cancel ALL pending I/O on this handle.
                     unsafe {
-                        let _ = CancelIoEx(self.handle, None);
+                        let _ = CancelIoEx(self.handle.as_raw(), None);
                     }
                     Err("IOCTL timed out after 5s".into())
-                }
-            }
-        }
-
-        /// Low-level overlapped DeviceIoControl. Blocks until completion.
-        /// Called from the dedicated I/O worker thread.
-        fn ioctl_overlapped(
-            handle: HANDLE,
-            ioctl: u32,
-            input: &[u8],
-            out_size: usize,
-        ) -> std::result::Result<Vec<u8>, String> {
-            let mut output = vec![0u8; out_size];
-            let mut ret: u32 = 0;
-            let event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
-                .map_err(|e| format!("CreateEvent: {e}"))?;
-            let mut ov: OVERLAPPED = unsafe { mem::zeroed() };
-            ov.hEvent = event;
-            let in_ptr = if input.is_empty() {
-                None
-            } else {
-                Some(input.as_ptr() as *const _)
-            };
-            let out_ptr = if out_size == 0 {
-                None
-            } else {
-                Some(output.as_mut_ptr() as *mut _)
-            };
-            let r = unsafe {
-                DeviceIoControl(
-                    handle,
-                    ioctl,
-                    in_ptr,
-                    input.len() as u32,
-                    out_ptr,
-                    out_size as u32,
-                    Some(&mut ret),
-                    Some(&mut ov),
-                )
-            };
-            match r {
-                Ok(()) => {}
-                Err(e) if e.code().0 as u32 == 0x800703E5 => {
-                    // ERROR_IO_PENDING — block until I/O completes (or is cancelled).
-                    unsafe {
-                        GetOverlappedResult(handle, &ov, &mut ret, true).map_err(|e2| {
-                            let _ = CloseHandle(event);
-                            format!("{e2}")
-                        })?;
-                    }
-                }
-                Err(e) => {
-                    unsafe {
-                        let _ = CloseHandle(event);
-                    }
-                    return Err(format!("{e}"));
-                }
-            }
-            unsafe {
-                let _ = CloseHandle(event);
-            }
-            output.truncate(ret as usize);
-            Ok(output)
-        }
-
-        /// Low-level overlapped DeviceIoControl with configurable timeout.
-        /// Used for IOCTL_NOTIFY which may pend indefinitely.
-        /// Called directly (not from the I/O worker) to avoid blocking TRANSACT.
-        fn ioctl_overlapped_timeout(
-            handle: HANDLE,
-            ioctl: u32,
-            input: &[u8],
-            out_size: usize,
-            timeout_ms: u32,
-        ) -> std::result::Result<Vec<u8>, String> {
-            let mut output = vec![0u8; out_size];
-            let mut ret: u32 = 0;
-            let event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
-                .map_err(|e| format!("CreateEvent: {e}"))?;
-            let mut ov: OVERLAPPED = unsafe { mem::zeroed() };
-            ov.hEvent = event;
-            let in_ptr = if input.is_empty() {
-                None
-            } else {
-                Some(input.as_ptr() as *const _)
-            };
-            let out_ptr = if out_size == 0 {
-                None
-            } else {
-                Some(output.as_mut_ptr() as *mut _)
-            };
-            let r = unsafe {
-                DeviceIoControl(
-                    handle,
-                    ioctl,
-                    in_ptr,
-                    input.len() as u32,
-                    out_ptr,
-                    out_size as u32,
-                    Some(&mut ret),
-                    Some(&mut ov),
-                )
-            };
-            match r {
-                Ok(()) => {
-                    // Completed synchronously
-                    unsafe {
-                        let _ = CloseHandle(event);
-                    }
-                    output.truncate(ret as usize);
-                    Ok(output)
-                }
-                Err(e) if e.code().0 as u32 == 0x800703E5 => {
-                    // ERROR_IO_PENDING — wait with timeout
-                    let wait = unsafe { WaitForSingleObject(event, timeout_ms) };
-                    match wait.0 {
-                        0 => {
-                            // WAIT_OBJECT_0 — completed
-                            unsafe {
-                                GetOverlappedResult(handle, &ov, &mut ret, false).map_err(
-                                    |e2| {
-                                        let _ = CloseHandle(event);
-                                        format!("{e2}")
-                                    },
-                                )?;
-                                let _ = CloseHandle(event);
-                            }
-                            output.truncate(ret as usize);
-                            Ok(output)
-                        }
-                        0x102 => {
-                            // WAIT_TIMEOUT — cancel the pending I/O
-                            unsafe {
-                                let _ = CancelIoEx(handle, Some(&ov));
-                                // Wait for cancellation to complete
-                                let _ = GetOverlappedResult(handle, &ov, &mut ret, true);
-                                let _ = CloseHandle(event);
-                            }
-                            Err(format!("IOCTL timed out after {}ms", timeout_ms))
-                        }
-                        _ => {
-                            // WAIT_FAILED or other
-                            unsafe {
-                                let _ = CancelIoEx(handle, Some(&ov));
-                                let _ = GetOverlappedResult(handle, &ov, &mut ret, true);
-                                let _ = CloseHandle(event);
-                            }
-                            Err("WaitForSingleObject failed".into())
-                        }
-                    }
-                }
-                Err(e) => {
-                    unsafe {
-                        let _ = CloseHandle(event);
-                    }
-                    Err(format!("{e}"))
                 }
             }
         }
@@ -559,43 +582,49 @@ mod windows_impl {
     /// the instance ID.  Returns the first match — sufficient for single-device
     /// setups; multi-device would need PAL↔USB path correlation.
     pub(super) fn find_usb_serial() -> Option<String> {
+        use super::win_ffi::DevInfoHandle;
+        use std::mem;
+
         // Search for USB devices with VID_1235 (Focusrite) in their instance ID
         let usb_enumerator: Vec<u16> = "USB".encode_utf16().chain(std::iter::once(0)).collect();
-        unsafe {
-            let dev_info = SetupDiGetClassDevsW(
+        let dev_info = unsafe {
+            SetupDiGetClassDevsW(
                 None,
                 PCWSTR(usb_enumerator.as_ptr()),
                 None,
                 DIGCF_ALLCLASSES | DIGCF_PRESENT,
             )
-            .ok()?;
-            for index in 0..256 {
-                let mut dev_data = SP_DEVINFO_DATA {
-                    cbSize: mem::size_of::<SP_DEVINFO_DATA>() as u32,
-                    ..Default::default()
-                };
-                if SetupDiEnumDeviceInfo(dev_info, index, &mut dev_data).is_err() {
-                    break;
-                }
-                let mut instance_id = vec![0u16; 512];
-                if SetupDiGetDeviceInstanceIdW(dev_info, &dev_data, Some(&mut instance_id), None)
-                    .is_ok()
-                {
-                    let id = String::from_utf16_lossy(&instance_id);
-                    let id = id.trim_end_matches('\0');
-                    let id_upper = id.to_uppercase();
-                    // Match Focusrite USB devices: USB\VID_1235&PID_xxxx\SERIAL
-                    if id_upper.contains("VID_1235") {
-                        // Serial is the third segment after the second backslash
-                        let parts: Vec<&str> = id.split('\\').collect();
-                        if parts.len() >= 3 && !parts[2].is_empty() {
-                            let _ = SetupDiDestroyDeviceInfoList(dev_info);
-                            return Some(parts[2].to_string());
-                        }
+            .ok()?
+        };
+        // RAII: DevInfoHandle calls SetupDiDestroyDeviceInfoList on drop.
+        let _dev_info_guard = DevInfoHandle::new(dev_info);
+
+        for index in 0..256 {
+            let mut dev_data = SP_DEVINFO_DATA {
+                cbSize: mem::size_of::<SP_DEVINFO_DATA>() as u32,
+                ..Default::default()
+            };
+            if unsafe { SetupDiEnumDeviceInfo(dev_info, index, &mut dev_data) }.is_err() {
+                break;
+            }
+            let mut instance_id = vec![0u16; 512];
+            if unsafe {
+                SetupDiGetDeviceInstanceIdW(dev_info, &dev_data, Some(&mut instance_id), None)
+            }
+            .is_ok()
+            {
+                let id = String::from_utf16_lossy(&instance_id);
+                let id = id.trim_end_matches('\0');
+                let id_upper = id.to_uppercase();
+                // Match Focusrite USB devices: USB\VID_1235&PID_xxxx\SERIAL
+                if id_upper.contains("VID_1235") {
+                    // Serial is the third segment after the second backslash
+                    let parts: Vec<&str> = id.split('\\').collect();
+                    if parts.len() >= 3 && !parts[2].is_empty() {
+                        return Some(parts[2].to_string());
                     }
                 }
             }
-            let _ = SetupDiDestroyDeviceInfoList(dev_info);
         }
         None
     }
@@ -605,7 +634,7 @@ mod windows_impl {
             let (path, serial) = Self::find_device().ok_or(DeviceError::NotFound)?;
 
             let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
-            let handle = unsafe {
+            let raw_handle = unsafe {
                 CreateFileW(
                     PCWSTR(wide.as_ptr()),
                     (GENERIC_READ | GENERIC_WRITE).0,
@@ -618,17 +647,29 @@ mod windows_impl {
             }
             .map_err(|e| DeviceError::OpenFailed(format!("CreateFileW: {e}")))?;
 
-            // Init sequence (use ioctl_overlapped directly — worker not yet spawned)
-            Self::ioctl_sync(handle, IOCTL_INIT, &[], 16)
+            // Init sequence — worker not yet spawned, use ioctl_impl directly
+            ioctl_impl(raw_handle, IOCTL_INIT, &[], 16, WaitStrategy::Sync)
                 .map_err(|e| DeviceError::InitFailed(format!("IOCTL_INIT: {e}")))?;
 
             let init_buf = Self::transact_buf(0, CMD_USB_INIT, &[]);
-            let init_raw = Self::ioctl_overlapped(handle, IOCTL_TRANSACT, &init_buf, 100)
-                .map_err(|e| DeviceError::InitFailed(format!("USB_INIT: {e}")))?;
+            let init_raw = ioctl_impl(
+                raw_handle,
+                IOCTL_TRANSACT,
+                &init_buf,
+                100,
+                WaitStrategy::Overlapped,
+            )
+            .map_err(|e| DeviceError::InitFailed(format!("USB_INIT: {e}")))?;
 
             let config_buf = Self::transact_buf(0, CMD_GET_CONFIG, &[]);
-            let config_raw = Self::ioctl_overlapped(handle, IOCTL_TRANSACT, &config_buf, 96)
-                .map_err(|e| DeviceError::InitFailed(format!("GET_CONFIG: {e}")))?;
+            let config_raw = ioctl_impl(
+                raw_handle,
+                IOCTL_TRANSACT,
+                &config_buf,
+                96,
+                WaitStrategy::Overlapped,
+            )
+            .map_err(|e| DeviceError::InitFailed(format!("GET_CONFIG: {e}")))?;
 
             if config_raw.len() < 16 {
                 return Err(DeviceError::InitFailed(
@@ -638,8 +679,11 @@ mod windows_impl {
 
             let token = u64::from_le_bytes(config_raw[8..16].try_into().unwrap());
 
-            // Spawn the dedicated I/O worker thread
-            let io_tx = Self::spawn_io_worker(handle);
+            // Spawn the dedicated I/O worker thread (needs raw handle before wrapping)
+            let io_tx = Self::spawn_io_worker(raw_handle);
+
+            // Wrap handle in RAII wrapper — OwnedHandle::drop will call CloseHandle
+            let handle = OwnedHandle::new(raw_handle);
 
             // Create device with worker thread ready
             let mut dev = WindowsDevice {
@@ -707,8 +751,14 @@ mod windows_impl {
         fn wait_notify(&self, timeout_ms: u64) -> Result<Vec<u8>> {
             // Direct overlapped I/O — bypasses the I/O worker thread
             // to avoid blocking concurrent TRANSACT operations.
-            Self::ioctl_overlapped_timeout(self.handle, IOCTL_NOTIFY, &[], 16, timeout_ms as u32)
-                .map_err(DeviceError::TransactFailed)
+            ioctl_impl(
+                self.handle.as_raw(),
+                IOCTL_NOTIFY,
+                &[],
+                16,
+                WaitStrategy::OverlappedTimeout(timeout_ms as u32),
+            )
+            .map_err(DeviceError::TransactFailed)
         }
 
         fn raw_ioctl(&self, code: u32, input: &[u8], out_size: usize) -> Result<Vec<u8>> {
@@ -717,13 +767,7 @@ mod windows_impl {
         }
     }
 
-    impl Drop for WindowsDevice {
-        fn drop(&mut self) {
-            unsafe {
-                let _ = CloseHandle(self.handle);
-            }
-        }
-    }
+    // OwnedHandle::drop calls CloseHandle automatically — no manual Drop needed.
 }
 
 #[cfg(windows)]

@@ -134,10 +134,10 @@ fn monitor_teardown(mctx: &MonitorCtx) {
     println!("Restoring LED state...");
     if let Some(ref dev) = mctx.device {
         if let Err(e) = led::restore_on_exit(dev, mctx.indicator.strategy()) {
-            log::warn!("could not restore LED state: {e}");
+            log::warn!("[device] could not restore LED state: {e}");
         }
     } else {
-        log::warn!("device disconnected, cannot restore LED state");
+        log::warn!("[device] disconnected, cannot restore LED state");
     }
     println!("Done.");
 }
@@ -203,7 +203,7 @@ pub(super) fn cmd_monitor(
     if monitor.is_muted() {
         match monitor.set_muted(false) {
             Ok(()) => println!("  Unmuted inputs on exit."),
-            Err(e) => log::warn!("failed to unmute on exit: {e}"),
+            Err(e) => log::warn!("[mute] failed to unmute on exit: {e}"),
         }
     }
 

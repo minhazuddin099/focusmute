@@ -9,7 +9,7 @@ use std::thread::JoinHandle;
 
 use focusmute_lib::audio::MuteMonitor;
 use focusmute_lib::config::Config;
-use focusmute_lib::device::open_device_by_serial;
+use focusmute_lib::device::{ScarlettDevice, open_device_by_serial};
 
 use global_hotkey::GlobalHotKeyEvent;
 use muda::MenuEvent;
@@ -56,15 +56,54 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
     // let the reconnect loop pick it up later.
     let (config, parse_warnings) = Config::load_with_warnings();
     for w in &parse_warnings {
-        log::warn!("{w}");
+        log::warn!("[config] {w}");
+    }
+    if let Some(config_path) = Config::path() {
+        log::info!("[config] {}", config_path.display());
+    }
+    log::info!(
+        "[focusmute] v{} starting (hotkey={}, inputs={}, color={}, sound={}, notifications={})",
+        env!("CARGO_PKG_VERSION"),
+        config.keyboard.hotkey,
+        config.indicator.mute_inputs,
+        config.indicator.mute_color,
+        if config.sound.sound_enabled {
+            "on"
+        } else {
+            "off"
+        },
+        if config.system.notifications_enabled {
+            "on"
+        } else {
+            "off"
+        },
+    );
+    if !config.hooks.on_mute_command.trim().is_empty()
+        || !config.hooks.on_unmute_command.trim().is_empty()
+    {
+        log::info!(
+            "[hooks] on_mute={:?}, on_unmute={:?}",
+            config.hooks.on_mute_command,
+            config.hooks.on_unmute_command,
+        );
     }
     let (mut state, mut device) = match open_device_by_serial(&config.system.device_serial) {
         Ok(dev) => {
+            let info = dev.info();
+            log::info!(
+                "[device] {} (firmware {}{})",
+                info.device_name,
+                info.firmware,
+                info.serial
+                    .as_ref()
+                    .map(|s| format!(", serial {s}"))
+                    .unwrap_or_default(),
+            );
             let st = TrayState::init_with_config(config, &dev)?;
             (st, Some(dev))
         }
         Err(e) => {
-            log::warn!("No device at startup ({e}) — starting without device");
+            log::warn!("[device] not found at startup ({e}) — starting without device");
             (TrayState::init_without_device(config), None)
         }
     };
@@ -74,6 +113,10 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
 
     // Check initial mute state
     let initial_muted = main_monitor.as_ref().is_some_and(|m| m.is_muted());
+    log::info!(
+        "[mute] initial state: {}",
+        if initial_muted { "muted" } else { "live" }
+    );
 
     if initial_muted && let Some(ref dev) = device {
         state.set_initial_muted(true, dev);
@@ -120,7 +163,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
     let bg_handle = if let Some(ref monitor) = main_monitor {
         Some(P::spawn_poll_thread(Arc::clone(monitor), tx))
     } else {
-        log::warn!("No audio monitor available — mute polling disabled");
+        log::warn!("[audio] no monitor available — mute polling disabled");
         None
     };
 
@@ -141,7 +184,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
         if device.is_none()
             && let Some(new_dev) = state.try_reconnect()
         {
-            log::info!("[device] reconnected");
+            log::info!("[device] reconnected: {}", new_dev.info().device_name);
             device = Some(new_dev);
             tray_menu.set_device_connected(true);
         }
@@ -152,6 +195,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
                 Ok(Msg::MutePoll(muted)) => {
                     let (action, device_lost) = state.process_mute_poll(muted, device.as_ref());
                     if device_lost {
+                        log::warn!("[device] disconnected (communication error)");
                         device = None;
                         tray_menu.set_device_connected(false);
                     }
@@ -160,7 +204,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     if !poll_thread_dead {
-                        log::error!("audio monitor thread stopped unexpectedly");
+                        log::error!("[audio] monitor thread stopped unexpectedly");
                         poll_thread_dead = true;
                     }
                     break;
@@ -174,7 +218,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
                 if let Some(ref m) = main_monitor
                     && let Err(e) = m.set_muted(!is_muted)
                 {
-                    log::warn!("failed to toggle mute: {e}");
+                    log::warn!("[mute] failed to toggle mute: {e}");
                 }
             };
             let (quit, force_reconnect) = state::handle_menu_event(
@@ -201,7 +245,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
                 && let Some(ref m) = main_monitor
                 && let Err(e) = m.set_muted(!state.indicator.is_muted())
             {
-                log::warn!("failed to toggle mute: {e}");
+                log::warn!("[mute] failed to toggle mute: {e}");
             }
         }
 
@@ -212,6 +256,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
     // Cleanup — join background thread, unmute, restore LEDs, then drop monitor.
     // Joining before drop ensures the monitor is dropped on the main thread
     // (important for COM cleanup on Windows).
+    log::info!("[focusmute] shutting down");
     RUNNING.store(false, Ordering::SeqCst);
     if let Some(handle) = bg_handle {
         let _ = handle.join();
@@ -221,9 +266,11 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
     // (LEDs return to normal state and can no longer indicate mute).
     if let Some(ref monitor) = main_monitor
         && monitor.is_muted()
-        && let Err(e) = monitor.set_muted(false)
     {
-        log::warn!("failed to unmute on exit: {e}");
+        match monitor.set_muted(false) {
+            Ok(()) => log::info!("[mute] unmuted on exit"),
+            Err(e) => log::warn!("[mute] failed to unmute on exit: {e}"),
+        }
     }
     drop(main_monitor);
 

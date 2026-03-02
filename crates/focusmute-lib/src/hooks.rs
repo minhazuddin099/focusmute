@@ -50,7 +50,7 @@ fn run_hook(command: &str) {
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
-        log::warn!("hook skipped (previous hook still running): {command}");
+        log::warn!("[hooks] skipped (previous hook still running): {command}");
         return;
     }
     let command = command.to_string();
@@ -58,13 +58,15 @@ fn run_hook(command: &str) {
         let _guard = HookGuard;
         let result = run_hook_with_timeout(&command, HOOK_TIMEOUT);
         match result {
-            Ok(s) if !s.success() => {
-                log::warn!("hook command exited with {s}: {command}");
+            Ok(s) if s.success() => {
+                log::debug!("[hooks] completed: {command}");
+            }
+            Ok(s) => {
+                log::warn!("[hooks] exited with {s}: {command}");
             }
             Err(e) => {
-                log::warn!("hook command failed: {e}: {command}");
+                log::warn!("[hooks] failed: {e}: {command}");
             }
-            _ => {}
         }
     });
 }
@@ -90,7 +92,7 @@ fn run_hook_with_timeout(command: &str, timeout: Duration) -> io::Result<ExitSta
     }
 
     // Timeout — kill and reap
-    log::warn!("hook command timed out after {timeout:?}, killing: {command}");
+    log::warn!("[hooks] timed out after {timeout:?}, killing: {command}");
     let _ = child.kill();
     child.wait() // reap zombie
 }

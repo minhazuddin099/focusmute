@@ -11,7 +11,7 @@ mod windows;
 
 /// AppUserModelID for Windows toast notifications.
 #[cfg(windows)]
-pub(super) const AUMID: &str = "Barnumbirr.Focusmute";
+pub(crate) const AUMID: &str = "Barnumbirr.Focusmute";
 
 /// Register the AUMID in the Windows registry so toast notifications display
 /// "FocusMute" with the app icon instead of "Windows PowerShell".
@@ -58,14 +58,8 @@ pub fn run() -> focusmute_lib::error::Result<()> {
     })?;
 
     if !instance.is_single() {
-        log::warn!("Another instance of FocusMute is already running.");
-        let mut n = notify_rust::Notification::new();
-        #[cfg(windows)]
-        n.app_id(AUMID);
-        #[cfg(target_os = "linux")]
-        n.summary("FocusMute");
-        n.body("Another instance is already running.");
-        let _ = n.show();
+        log::warn!("[focusmute] another instance is already running");
+        crate::notification::Notifier::show_oneshot("Another instance is already running.");
         return Ok(());
     }
 

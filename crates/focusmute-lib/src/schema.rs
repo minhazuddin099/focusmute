@@ -25,6 +25,9 @@ use serde::{Deserialize, Serialize};
 use crate::device::{DeviceError, Result, ScarlettDevice};
 use crate::protocol::*;
 
+/// Current schema cache format version. Bump when SchemaConstants fields change.
+pub const SCHEMA_FORMAT_VERSION: u32 = 1;
+
 /// Constants extracted from the firmware schema for a specific model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaConstants {
@@ -62,6 +65,10 @@ pub struct SchemaConstants {
     /// Used for cache invalidation when firmware is updated.
     #[serde(default)]
     pub firmware_version: String,
+
+    /// Cache format version — 0 (or absent) means pre-versioning cache.
+    #[serde(default)]
+    pub schema_format_version: u32,
 }
 
 /// Read raw schema pages from device, concatenate payloads.
@@ -274,6 +281,7 @@ pub fn parse_schema(json: &str) -> crate::error::Result<SchemaConstants> {
         input_controls,
         app_space_features,
         firmware_version: String::new(),
+        schema_format_version: 0, // Set by extract_or_cached() before saving
     })
 }
 
@@ -291,15 +299,20 @@ pub fn cache_path() -> Option<PathBuf> {
     crate::config::Config::dir().map(|d| d.join("schema_cache.json"))
 }
 
-/// Save SchemaConstants to cache file.
-pub fn save_cache(constants: &SchemaConstants) -> std::io::Result<()> {
-    let path = cache_path()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "No config directory"))?;
+/// Save SchemaConstants to a specific path. Testable without relying on platform config dirs.
+pub fn save_cache_to(path: &std::path::Path, constants: &SchemaConstants) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(constants).map_err(std::io::Error::other)?;
-    std::fs::write(&path, json)
+    std::fs::write(path, json)
+}
+
+/// Save SchemaConstants to cache file.
+pub fn save_cache(constants: &SchemaConstants) -> std::io::Result<()> {
+    let path = cache_path()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "No config directory"))?;
+    save_cache_to(&path, constants)
 }
 
 /// Load SchemaConstants from cache file, if it exists and matches the model name + firmware.
@@ -317,29 +330,77 @@ pub fn load_cache_from(
     model_name: &str,
     firmware_version: &str,
 ) -> Option<SchemaConstants> {
-    let data = std::fs::read_to_string(path).ok()?;
-    let cached: SchemaConstants = serde_json::from_str(&data).ok()?;
+    let data = match std::fs::read_to_string(path) {
+        Ok(d) => d,
+        Err(_) => {
+            log::debug!("[schema] cache not found: {}", path.display());
+            return None;
+        }
+    };
+    let cached: SchemaConstants = match serde_json::from_str(&data) {
+        Ok(c) => c,
+        Err(e) => {
+            log::debug!("[schema] cache parse error: {e}");
+            return None;
+        }
+    };
     if !cached.product_name.eq_ignore_ascii_case(model_name) {
+        log::debug!(
+            "[schema] cache model mismatch (cached={:?}, expected={:?}) — re-extracting",
+            cached.product_name,
+            model_name
+        );
         return None;
     }
     // Firmware version must match (empty cached version = old cache, force re-extraction)
     if cached.firmware_version.is_empty() || cached.firmware_version != firmware_version {
+        log::debug!(
+            "[schema] cache firmware mismatch (cached={:?}, expected={:?}) — re-extracting",
+            cached.firmware_version,
+            firmware_version
+        );
+        return None;
+    }
+    if cached.schema_format_version != SCHEMA_FORMAT_VERSION {
+        log::debug!(
+            "[schema] cache version mismatch (cached={}, current={}) — re-extracting",
+            cached.schema_format_version,
+            SCHEMA_FORMAT_VERSION
+        );
         return None;
     }
     Some(cached)
 }
 
-/// Extract schema from device, using cache when available.
-pub fn extract_or_cached(device: &impl ScarlettDevice) -> crate::error::Result<SchemaConstants> {
+/// Testable variant of `extract_or_cached` with explicit cache path.
+pub fn extract_or_cached_at(
+    device: &impl ScarlettDevice,
+    cache_path: &std::path::Path,
+) -> crate::error::Result<SchemaConstants> {
     let info = device.info();
     let fw = info.firmware.to_string();
-    if let Some(cached) = load_cache(info.model(), &fw) {
+    if let Some(cached) = load_cache_from(cache_path, info.model(), &fw) {
         return Ok(cached);
     }
     let mut constants = extract_schema(device)?;
     constants.firmware_version = fw;
-    let _ = save_cache(&constants);
+    constants.schema_format_version = SCHEMA_FORMAT_VERSION;
+    let _ = save_cache_to(cache_path, &constants);
     Ok(constants)
+}
+
+/// Extract schema from device, using cache when available.
+pub fn extract_or_cached(device: &impl ScarlettDevice) -> crate::error::Result<SchemaConstants> {
+    if let Some(path) = cache_path() {
+        extract_or_cached_at(device, &path)
+    } else {
+        // No config dir — extract without caching
+        let info = device.info();
+        let mut constants = extract_schema(device)?;
+        constants.firmware_version = info.firmware.to_string();
+        constants.schema_format_version = SCHEMA_FORMAT_VERSION;
+        Ok(constants)
+    }
 }
 
 // ── Helpers ──
@@ -573,6 +634,7 @@ mod tests {
             input_controls: vec!["air".into(), "instrument".into()],
             app_space_features: vec!["directMonitoring".into()],
             firmware_version: "2.0.2417.0".into(),
+            schema_format_version: SCHEMA_FORMAT_VERSION,
         };
         let json = serde_json::to_string(&constants).unwrap();
         let restored: SchemaConstants = serde_json::from_str(&json).unwrap();
@@ -583,6 +645,7 @@ mod tests {
         assert_eq!(restored.input_controls, vec!["air", "instrument"]);
         assert_eq!(restored.app_space_features, vec!["directMonitoring"]);
         assert_eq!(restored.firmware_version, "2.0.2417.0");
+        assert_eq!(restored.schema_format_version, SCHEMA_FORMAT_VERSION);
     }
 
     #[test]
@@ -604,6 +667,7 @@ mod tests {
         assert_eq!(restored.metering_segments, 0);
         assert!(restored.input_controls.is_empty());
         assert!(restored.app_space_features.is_empty());
+        assert_eq!(restored.schema_format_version, 0);
     }
 
     #[test]
@@ -763,6 +827,7 @@ mod tests {
             input_controls: vec![],
             app_space_features: vec![],
             firmware_version: "2.0.2417.0".into(),
+            schema_format_version: SCHEMA_FORMAT_VERSION,
         };
         let json = serde_json::to_string(&constants).unwrap();
         let restored: SchemaConstants = serde_json::from_str(&json).unwrap();
@@ -795,6 +860,7 @@ mod tests {
             input_controls: vec![],
             app_space_features: vec![],
             firmware_version: fw.into(),
+            schema_format_version: SCHEMA_FORMAT_VERSION,
         }
     }
 
@@ -1081,5 +1147,201 @@ mod tests {
             result.unwrap_err().to_string().contains("directLEDValues"),
             "should report missing directLEDValues"
         );
+    }
+
+    // ── Schema format versioning ──
+
+    #[test]
+    fn cache_version_match() {
+        let constants = test_constants("2.0.2417.0");
+        assert_eq!(constants.schema_format_version, SCHEMA_FORMAT_VERSION);
+        let path = write_test_cache("cache_ver_match", &constants);
+        let result = load_cache_from(&path, "Scarlett 2i2 4th Gen", "2.0.2417.0");
+        assert!(
+            result.is_some(),
+            "matching version should load successfully"
+        );
+        assert_eq!(result.unwrap().schema_format_version, SCHEMA_FORMAT_VERSION);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn cache_version_mismatch() {
+        let mut constants = test_constants("2.0.2417.0");
+        constants.schema_format_version = SCHEMA_FORMAT_VERSION + 1;
+        let path = write_test_cache("cache_ver_mismatch", &constants);
+        let result = load_cache_from(&path, "Scarlett 2i2 4th Gen", "2.0.2417.0");
+        assert!(result.is_none(), "mismatched version should be rejected");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn cache_no_version_field() {
+        // JSON without schema_format_version → deserializes to 0 → rejected
+        let json = r#"{
+            "product_name": "Scarlett 2i2 4th Gen",
+            "max_leds": 40,
+            "max_inputs": 2,
+            "max_outputs": 2,
+            "gradient_count": 11,
+            "gradient_offset": 384,
+            "gradient_notify": 9,
+            "direct_led_count": 40,
+            "direct_led_offset": 92,
+            "firmware_version": "2.0.2417.0"
+        }"#;
+        let dir = std::env::temp_dir().join("focusmute_test_cache_no_ver");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("schema_cache.json");
+        std::fs::write(&path, json).unwrap();
+        let result = load_cache_from(&path, "Scarlett 2i2 4th Gen", "2.0.2417.0");
+        assert!(
+            result.is_none(),
+            "cache without version field should be rejected"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn serde_roundtrip_with_version() {
+        let constants = test_constants("2.0.2417.0");
+        let json = serde_json::to_string(&constants).unwrap();
+        let restored: SchemaConstants = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.schema_format_version, SCHEMA_FORMAT_VERSION);
+    }
+
+    // ── save_cache_to / extract_or_cached_at ──
+
+    #[test]
+    fn save_cache_to_writes_valid_json() {
+        let dir = std::env::temp_dir().join("focusmute_test_save_cache_to");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("schema_cache.json");
+        let constants = test_constants("2.0.2417.0");
+
+        save_cache_to(&path, &constants).unwrap();
+
+        let data = std::fs::read_to_string(&path).unwrap();
+        let restored: SchemaConstants = serde_json::from_str(&data).unwrap();
+        assert_eq!(restored.product_name, "Scarlett 2i2 4th Gen");
+        assert_eq!(restored.firmware_version, "2.0.2417.0");
+        assert_eq!(restored.schema_format_version, SCHEMA_FORMAT_VERSION);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_cache_to_creates_parent_dir() {
+        let dir = std::env::temp_dir().join("focusmute_test_save_cache_parent");
+        let _ = std::fs::remove_dir_all(&dir);
+        let nested = dir.join("deeply").join("nested");
+        let path = nested.join("schema_cache.json");
+
+        save_cache_to(&path, &test_constants("1.0.0.0")).unwrap();
+        assert!(path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_load_cache_roundtrip() {
+        let dir = std::env::temp_dir().join("focusmute_test_save_load_rt");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("schema_cache.json");
+        let constants = test_constants("2.0.2417.0");
+
+        save_cache_to(&path, &constants).unwrap();
+        let loaded = load_cache_from(&path, "Scarlett 2i2 4th Gen", "2.0.2417.0");
+
+        assert!(loaded.is_some());
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.product_name, constants.product_name);
+        assert_eq!(loaded.max_leds, constants.max_leds);
+        assert_eq!(loaded.firmware_version, constants.firmware_version);
+        assert_eq!(
+            loaded.schema_format_version,
+            constants.schema_format_version
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Prepare a MockDevice that can serve schema extraction.
+    fn mock_device_with_schema() -> MockDevice {
+        let raw = encode_schema(&test_schema_json());
+        let total_size = raw.len();
+
+        let mut info_resp = vec![0u8; 8];
+        info_resp.extend_from_slice(&0u16.to_le_bytes());
+        info_resp.extend_from_slice(&(total_size as u16).to_le_bytes());
+
+        let dev = MockDevice::new();
+        dev.add_transact_response(CMD_INFO_DEVMAP, info_resp);
+
+        let page_count = total_size.div_ceil(DEVMAP_PAGE_SIZE);
+        for page in 0..page_count {
+            let start = page * DEVMAP_PAGE_SIZE;
+            let end = (start + DEVMAP_PAGE_SIZE).min(total_size);
+            let mut page_resp = vec![0u8; 8];
+            page_resp.extend_from_slice(&raw[start..end]);
+            page_resp.resize(DEVMAP_RESPONSE_SIZE, 0);
+            dev.add_transact_response(CMD_GET_DEVMAP, page_resp);
+        }
+        dev
+    }
+
+    #[test]
+    fn extract_or_cached_at_cache_miss() {
+        let dir = std::env::temp_dir().join("focusmute_test_eoc_miss");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("schema_cache.json");
+
+        let dev = mock_device_with_schema();
+        let constants = extract_or_cached_at(&dev, &path).unwrap();
+
+        assert_eq!(constants.product_name, "Scarlett 2i2 4th Gen");
+        assert_eq!(constants.schema_format_version, SCHEMA_FORMAT_VERSION);
+        // Cache file should have been written
+        assert!(path.exists(), "cache file should be created on miss");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_or_cached_at_cache_hit() {
+        let dir = std::env::temp_dir().join("focusmute_test_eoc_hit");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Pre-populate cache — use the firmware version from MockDevice default
+        let mut constants = test_constants("1.2.3.4");
+        constants.product_name = "Scarlett 2i2 4th Gen".into();
+        let path = write_test_cache("eoc_hit", &constants);
+
+        // Device with NO schema handlers — if called, would error
+        let dev = MockDevice::new();
+        let result = extract_or_cached_at(&dev, &path).unwrap();
+
+        assert_eq!(result.product_name, "Scarlett 2i2 4th Gen");
+        assert_eq!(result.firmware_version, "1.2.3.4");
+        // Confirm device was never called (transact_payloads should be empty)
+        assert!(
+            dev.transact_payloads.borrow().is_empty(),
+            "device should not be called on cache hit"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn extract_or_cached_at_device_error() {
+        let dir = std::env::temp_dir().join("focusmute_test_eoc_err");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("schema_cache.json");
+
+        // Device with no handlers → extraction fails
+        let dev = MockDevice::new();
+        let result = extract_or_cached_at(&dev, &path);
+
+        assert!(result.is_err());
+        assert!(!path.exists(), "no cache file on extraction error");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

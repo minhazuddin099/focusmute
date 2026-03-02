@@ -6,17 +6,12 @@ FocusMute monitors your system microphone's mute state and reflects it on your F
 
 ## Features
 
-- Configurable mute indicator color (any hex color or named color)
-- Global hotkey toggle (default: Ctrl+Shift+M)
-- Sound feedback on mute/unmute (built-in or custom WAV)
-- Auto-reconnect on device disconnect (exponential backoff) and graceful startup without device
-- Desktop notifications on mute/unmute (optional)
-- Hook commands on mute state change (run arbitrary shell commands)
-- Per-input targeting (all input number LEDs, or specific ones like "1" or "1,2")
-- Per-input mute colors (different color per input number LED)
+- Global hotkey toggle (default: Ctrl+Shift+M) with sound feedback
+- Configurable mute color per input (any hex color or named color)
+- Auto-reconnect on device disconnect and graceful startup without device
 - Schema-driven multi-model support (auto-discovers unknown Scarlett 4th Gen devices)
-- Device serial targeting (multi-device setups)
 - Settings GUI (tray app) and TOML config file
+- Extensible via shell hook commands, desktop notifications, and device serial targeting
 
 ## Supported Devices
 
@@ -207,6 +202,7 @@ focusmute/
         │   ├── probe.rs                probe subcommand
         │   └── status.rs              status subcommand
         ├── icon.rs                     Embedded PNG icon + app icon helper
+        ├── notification.rs             Desktop notifications (WinRT / notify-rust)
         ├── settings_dialog/            Settings dialog (egui / eframe)
         │   ├── mod.rs                  Shared helpers, dispatcher, SoundPreviewPlayer
         │   └── ui.rs                   Cross-platform egui UI + build_and_validate_config

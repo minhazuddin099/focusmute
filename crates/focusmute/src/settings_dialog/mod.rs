@@ -137,7 +137,7 @@ pub fn show_settings(
                 )))
             }),
         ) {
-            log::error!("settings dialog failed: {e}");
+            log::error!("[settings] dialog failed: {e}");
         }
 
         // Extract result after run_native returns (window closed)
@@ -147,7 +147,7 @@ pub fn show_settings(
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (config, model, device_info);
-        log::warn!("Settings dialog is not available on this platform.");
+        log::warn!("[settings] dialog not available on this platform");
         None
     }
 }

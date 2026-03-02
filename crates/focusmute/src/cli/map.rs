@@ -180,9 +180,9 @@ pub(super) fn cmd_map(
             match serde_json::to_string_pretty(&final_layout) {
                 Ok(json) => match std::fs::write(path, &json) {
                     Ok(()) => println!("Layout saved to {path}"),
-                    Err(e) => log::error!("writing {path}: {e}"),
+                    Err(e) => log::error!("[layout] writing {path}: {e}"),
                 },
-                Err(e) => log::error!("serializing layout: {e}"),
+                Err(e) => log::error!("[layout] serializing layout: {e}"),
             }
         }
 
@@ -192,7 +192,7 @@ pub(super) fn cmd_map(
             println!("{}", layout::generate_model_profile_code(pl));
         }
     } else if output.is_some() || output_code {
-        log::warn!("--output/--output-code require schema extraction (not available)");
+        log::warn!("[cli] --output/--output-code require schema extraction (not available)");
     }
 
     println!();

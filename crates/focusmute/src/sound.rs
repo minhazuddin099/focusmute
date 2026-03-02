@@ -85,7 +85,7 @@ pub(crate) fn init_audio_output() -> (Option<rodio::OutputStream>, Option<Sink>)
     match rodio::OutputStream::try_default() {
         Ok((stream, handle)) => (Some(stream), Sink::try_new(&handle).ok()),
         Err(e) => {
-            log::warn!("could not open audio output: {e}");
+            log::warn!("[sound] could not open audio output: {e}");
             (None, None)
         }
     }

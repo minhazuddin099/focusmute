@@ -166,7 +166,7 @@ pub(super) fn cmd_probe(dump_schema: bool) -> Result<()> {
                 println!();
             }
             Err(e) => {
-                log::warn!("layout prediction failed: {e}");
+                log::warn!("[layout] prediction failed: {e}");
                 println!();
             }
         }
@@ -180,9 +180,9 @@ pub(super) fn cmd_probe(dump_schema: bool) -> Result<()> {
                 Ok(json) => {
                     println!("{json}");
                 }
-                Err(e) => log::error!("decoding schema: {e}"),
+                Err(e) => log::error!("[schema] decoding schema: {e}"),
             },
-            Err(e) => log::error!("reading schema: {e}"),
+            Err(e) => log::error!("[schema] reading schema: {e}"),
         }
     }
 

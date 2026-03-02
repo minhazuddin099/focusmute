@@ -45,9 +45,12 @@ impl PlatformAdapter for WindowsAdapter {
 
     fn create_monitor() -> Option<WasapiMonitor> {
         match WasapiMonitor::new() {
-            Ok(m) => Some(m),
+            Ok(m) => {
+                log::info!("[audio] WASAPI mute monitor ready");
+                Some(m)
+            }
             Err(e) => {
-                log::warn!("could not create audio monitor: {e}");
+                log::warn!("[audio] could not create mute monitor: {e}");
                 None
             }
         }
@@ -56,7 +59,7 @@ impl PlatformAdapter for WindowsAdapter {
     fn spawn_poll_thread(monitor: Arc<WasapiMonitor>, tx: mpsc::Sender<Msg>) -> JoinHandle<()> {
         std::thread::spawn(move || {
             if let Err(e) = audio::com_init() {
-                log::error!("Audio init error: {e}");
+                log::error!("[audio] COM init error: {e}");
                 return;
             }
 

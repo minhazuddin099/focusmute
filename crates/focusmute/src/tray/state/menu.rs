@@ -24,7 +24,7 @@ impl TrayMenu {
     /// Update the reconnect menu item label based on device connection status.
     pub fn set_reconnect_label(&self, connected: bool) {
         self.reconnect_item.set_text(if connected {
-            "Refresh device"
+            "Re-sync device"
         } else {
             "Reconnect device"
         });
@@ -104,18 +104,7 @@ pub(crate) fn show_startup_warnings(warnings: &[String]) {
         return;
     }
     let body = warnings.join("\n");
-    show_notification(&format!("Config warnings:\n{body}"));
-}
-
-/// Show a desktop notification with the given body text.
-fn show_notification(body: &str) {
-    let mut n = notify_rust::Notification::new();
-    #[cfg(windows)]
-    n.app_id(crate::tray::AUMID);
-    #[cfg(target_os = "linux")]
-    n.summary("FocusMute");
-    n.body(body);
-    let _ = n.show();
+    crate::notification::Notifier::show_oneshot(&format!("Config warnings:\n{body}"));
 }
 
 /// Apply mute-state UI updates to the tray icon and status item.
@@ -128,6 +117,7 @@ pub fn apply_mute_ui(
 ) {
     match action {
         MonitorAction::ApplyMute => {
+            log::info!("[mute] muted");
             tray.set_icon(Some(icon_muted())).ok();
             tray.set_tooltip(Some("FocusMute — Muted")).ok();
             menu.status_item.set_text("Muted");
@@ -138,14 +128,15 @@ pub fn apply_mute_ui(
                         s,
                         state.config.sound.mute_sound_volume,
                     ),
-                    None => log::debug!("sound enabled but audio output unavailable"),
+                    None => log::debug!("[sound] enabled but audio output unavailable"),
                 }
             }
             if state.config.system.notifications_enabled {
-                show_notification("Microphone Muted");
+                resources.notifier.show_mute_state("Microphone Muted");
             }
         }
         MonitorAction::ClearMute => {
+            log::info!("[mute] unmuted");
             tray.set_icon(Some(icon_live())).ok();
             tray.set_tooltip(Some("FocusMute — Live")).ok();
             menu.status_item.set_text("Live");
@@ -156,11 +147,11 @@ pub fn apply_mute_ui(
                         s,
                         state.config.sound.unmute_sound_volume,
                     ),
-                    None => log::debug!("sound enabled but audio output unavailable"),
+                    None => log::debug!("[sound] enabled but audio output unavailable"),
                 }
             }
             if state.config.system.notifications_enabled {
-                show_notification("Microphone Live");
+                resources.notifier.show_mute_state("Microphone Live");
             }
         }
         MonitorAction::NoChange => {}
