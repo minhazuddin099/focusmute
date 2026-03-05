@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Third-party GitHub Actions pinned by commit SHA; release tag pattern tightened to semver (`v[0-9]+.[0-9]+.[0-9]+*`)
 - Clippy now lints all targets (`--all-targets`) including test code
 - CI concurrency group cancels superseded runs on the same branch/PR
+- Removed SignPath Foundation code signing steps from release workflow (application declined — project too early-stage for their community adoption requirements)
 
 ## [0.6.0] - 2026-03-01
 
