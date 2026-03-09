@@ -49,9 +49,48 @@ fn register_aumid() {
     let _ = key.set_value("IconUri", &icon_path.to_string_lossy().to_string());
 }
 
+/// Enable dark mode for the system tray context menu on Windows.
+///
+/// Uses undocumented `uxtheme.dll` APIs (ordinal 135 = `SetPreferredAppMode`,
+/// ordinal 136 = `FlushMenuThemes`) to opt into dark context menus. This is the
+/// same technique used by Chrome, Firefox, and Windows Terminal.
+///
+/// Fails silently if the APIs are unavailable (e.g., older Windows versions).
+#[cfg(windows)]
+fn enable_dark_mode_menus() {
+    use ::windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+
+    /// `AllowDark` variant of the undocumented `PreferredAppMode` enum.
+    const ALLOW_DARK: u32 = 1;
+
+    unsafe {
+        let Ok(module) = LoadLibraryW(::windows::core::w!("uxtheme.dll")) else {
+            return;
+        };
+
+        // Ordinal 135 = SetPreferredAppMode, ordinal 136 = FlushMenuThemes.
+        // Undocumented uxtheme.dll exports used by Chrome, Firefox, and
+        // Windows Terminal for dark context menus.
+        let set_mode = GetProcAddress(module, ::windows::core::PCSTR::from_raw(135 as *const u8));
+        let flush = GetProcAddress(module, ::windows::core::PCSTR::from_raw(136 as *const u8));
+
+        if let Some(f) = set_mode {
+            let f: unsafe extern "system" fn(u32) -> u32 = std::mem::transmute(f);
+            f(ALLOW_DARK);
+        }
+        if let Some(f) = flush {
+            let f: unsafe extern "system" fn() = std::mem::transmute(f);
+            f();
+        }
+    }
+}
+
 pub fn run() -> focusmute_lib::error::Result<()> {
     #[cfg(windows)]
     register_aumid();
+
+    #[cfg(windows)]
+    enable_dark_mode_menus();
 
     let instance = single_instance::SingleInstance::new("focusmute").map_err(|e| {
         focusmute_lib::FocusmuteError::Config(format!("Failed to create instance lock: {e}"))

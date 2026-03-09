@@ -8,4 +8,4 @@
 
 ## Known Limitations
 
-- **Light tray menu on Windows dark mode** — The system tray context menu always renders in light theme on Windows, even when the OS is set to dark mode. This is a Win32 platform limitation: the `muda` crate's `MenuTheme` API only affects window menu bars, not popup/context menus. The underlying Win32 API provides no documented dark mode support for system tray context menus. Tracked upstream: [tauri-apps/muda#97](https://github.com/tauri-apps/muda/issues/97).
+None at present.
